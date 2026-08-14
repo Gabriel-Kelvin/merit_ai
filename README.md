@@ -19,6 +19,19 @@ The FastAPI assessment engine supports:
 - resumable persistence through the Supabase repository;
 - duplicate-response protection and a stable API contract.
 
+## Sprint 2 vertical slice
+
+The React candidate experience now includes:
+
+- a premium, focused landing experience;
+- candidate profile and project-context capture;
+- one-question-at-a-time adaptive assessment presentation;
+- professional processing and recoverable error states;
+- browser refresh/resume using only a versioned assessment identifier;
+- readiness score, dimension evidence, strengths, gaps, and recommendation;
+- proof-of-improvement challenge and printable report;
+- responsive layouts verified at desktop and mobile widths.
+
 ## Architecture
 
 ```text
@@ -66,6 +79,16 @@ python -m venv .venv
 
 Open `http://127.0.0.1:8000/docs` for the Sprint 1 demo.
 
+Start the candidate application in a second terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173` for the product demo.
+
 ## Environment variables
 
 See `.env.example`. `SUPABASE_SECRET_KEY` is backend-only and must never use a `VITE_` prefix or be
@@ -74,7 +97,7 @@ placed in the frontend. `.env` is intentionally ignored by Git.
 ## Known limitations
 
 - Sprint 1 accepts text responses. Voice transcription belongs to Sprint 2 and is optional.
-- Authentication UI and candidate ownership validation are Sprint 2 work. Database tables are already
-  inaccessible to browser roles; all business operations flow through FastAPI.
+- Authentication UI and candidate ownership validation are the next security milestone. Database tables
+  are already inaccessible to browser roles; all business operations flow through FastAPI.
 - The repository can run in explicit `memory` mode for automated tests. The real application should use
   `supabase` mode.

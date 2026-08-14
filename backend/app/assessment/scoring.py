@@ -61,13 +61,20 @@ def build_result(session: AssessmentSession, model_name: str) -> AssessmentResul
     recommendation = build_recommendation(classification, dimension_scores, gaps)
     strongest = max(dimension_scores, key=lambda item: item.score)
     weakest = min(dimension_scores, key=lambda item: item.score)
-    summary = (
-        f"{session.candidate.name} demonstrates the strongest evidence in "
-        f"{strongest.dimension.value.replace('_', ' ')} ({strongest.score}/100). "
-        f"The highest-value development area is {weakest.dimension.value.replace('_', ' ')} "
-        f"({weakest.score}/100). The result is based on {len(evidence)} recorded evidence signals "
-        "across the assessment, with confidence retained per response."
-    )
+    if strongest.score - weakest.score < 5:
+        summary = (
+            f"{session.candidate.name} demonstrates consistently balanced evidence across all "
+            f"assessed capabilities ({weakest.score}–{strongest.score}/100). The result is based "
+            f"on {len(evidence)} recorded evidence signals, with confidence retained per response."
+        )
+    else:
+        summary = (
+            f"{session.candidate.name} demonstrates the strongest evidence in "
+            f"{strongest.dimension.value.replace('_', ' ')} ({strongest.score}/100). "
+            f"The highest-value development area is {weakest.dimension.value.replace('_', ' ')} "
+            f"({weakest.score}/100). The result is based on {len(evidence)} recorded evidence "
+            "signals across the assessment, with confidence retained per response."
+        )
     return AssessmentResult(
         assessment_id=session.id,
         readiness_score=overall,

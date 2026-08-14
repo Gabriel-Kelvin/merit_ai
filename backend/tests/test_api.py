@@ -64,3 +64,17 @@ def test_health_and_complete_http_workflow():
     result = client.get(f"/api/v1/assessments/{assessment_id}/result")
     assert result.status_code == 200
     assert result.json()["evidence_summary"]
+
+
+def test_local_frontend_origins_are_allowed():
+    client = make_client()
+    for origin in ("http://localhost:5173", "http://127.0.0.1:5173"):
+        response = client.options(
+            "/api/v1/assessments",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
