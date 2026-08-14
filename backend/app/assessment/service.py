@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from threading import RLock
 from uuid import UUID, uuid4
 
 from app.assessment.evaluator import Evaluator
 from app.assessment.models import (
+    AdaptiveAction,
+    AdaptiveDecision,
     AssessmentResult,
     AssessmentSession,
     AssessmentStateResponse,
@@ -13,7 +16,7 @@ from app.assessment.models import (
     SubmitResponseResponse,
 )
 from app.assessment.questioning import QuestionPlanner
-from app.assessment.scoring import build_result
+from app.assessment.scoring import build_dimension_progress, build_result
 from app.repositories.base import AssessmentRepository
 
 
@@ -45,6 +48,7 @@ class AssessmentService:
         self.evaluator = evaluator
         self.planner = planner or QuestionPlanner()
         self.max_questions = max_questions
+        self._submission_lock = RLock()
 
     def start(self, candidate) -> StartAssessmentResponse:
         session = AssessmentSession(
@@ -61,16 +65,44 @@ class AssessmentService:
             status=session.status,
             progress=session.progress,
             question=question,
+            max_questions=session.max_questions,
         )
 
     def submit(
         self, assessment_id: UUID, question_id: UUID, content: str
     ) -> SubmitResponseResponse:
+        with self._submission_lock:
+            return self._submit_locked(assessment_id, question_id, content)
+
+    def _submit_locked(
+        self, assessment_id: UUID, question_id: UUID, content: str
+    ) -> SubmitResponseResponse:
         session = self._get_or_raise(assessment_id)
+        existing = next(
+            (record for record in session.records if record.question.id == question_id), None
+        )
+        if existing and _normalize_answer(existing.response_text) == _normalize_answer(content):
+            return SubmitResponseResponse(
+                assessment_id=session.id,
+                status=session.status,
+                progress=session.progress,
+                evaluation=existing.evaluation,
+                adaptive_decision=AdaptiveDecision(
+                    action=AdaptiveAction.REPLAY,
+                    reason=(
+                        "The same answer was already accepted; the existing state was replayed "
+                        "without evaluating or writing it twice."
+                    ),
+                    evidence_sufficient=True,
+                ),
+                question=session.current_question,
+                result=session.result,
+                replayed=True,
+            )
+        if existing:
+            raise DuplicateResponseError("This question has already been answered")
         if session.status == AssessmentStatus.COMPLETED:
             raise AssessmentCompletedError("Assessment is already completed")
-        if any(record.question.id == question_id for record in session.records):
-            raise DuplicateResponseError("This question has already been answered")
         if session.current_question is None or session.current_question.id != question_id:
             raise QuestionMismatchError("Response does not match the active question")
 
@@ -83,7 +115,7 @@ class AssessmentService:
         self.repository.add_response(assessment_id, record)
         session.records.append(record)
 
-        next_question = self.planner.next_question(session, evaluation)
+        next_question, adaptive_decision = self.planner.next_question(session, evaluation)
         if next_question:
             session.questions.append(next_question)
             session.current_question = next_question
@@ -99,6 +131,7 @@ class AssessmentService:
             status=session.status,
             progress=session.progress,
             evaluation=evaluation,
+            adaptive_decision=adaptive_decision,
             question=next_question,
             result=session.result,
         )
@@ -112,6 +145,8 @@ class AssessmentService:
             candidate=session.candidate,
             question=session.current_question,
             questions_answered=len(session.records),
+            max_questions=session.max_questions,
+            dimension_progress=build_dimension_progress(session),
             result=session.result,
         )
 
@@ -126,3 +161,7 @@ class AssessmentService:
         if not session:
             raise AssessmentNotFoundError(f"Assessment {assessment_id} was not found")
         return session
+
+
+def _normalize_answer(value: str) -> str:
+    return " ".join(value.split())

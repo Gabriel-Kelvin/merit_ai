@@ -1,15 +1,15 @@
 from fastapi.testclient import TestClient
 
-from app.assessment.evaluator import DeterministicEvaluator
+from app.assessment.evaluator import DeterministicEvaluator, EvaluationUnavailableError
 from app.assessment.service import AssessmentService
 from app.config import Settings
 from app.main import create_app
 from app.repositories.memory import MemoryAssessmentRepository
 
 
-def make_client() -> TestClient:
+def make_client(evaluator=None) -> TestClient:
     service = AssessmentService(
-        MemoryAssessmentRepository(), DeterministicEvaluator(), max_questions=5
+        MemoryAssessmentRepository(), evaluator or DeterministicEvaluator(), max_questions=5
     )
     settings = Settings(
         merit_storage_mode="memory",
@@ -78,3 +78,50 @@ def test_local_frontend_origins_are_allowed():
         )
         assert response.status_code == 200
         assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_methodology_and_openapi_explain_the_engine():
+    client = make_client()
+    methodology = client.get("/api/v1/assessment-methodology")
+    assert methodology.status_code == 200
+    payload = methodology.json()
+    assert len(payload["dimensions"]) == 5
+    assert payload["practical_challenge_enabled"] is False
+    assert any("higher-difficulty" in rule for rule in payload["stopping_rules"])
+
+    schema = client.get("/openapi.json").json()
+    submit = schema["paths"]["/api/v1/assessments/{assessment_id}/responses"]["post"]
+    assert submit["operationId"] == "submitAssessmentResponse"
+    assert "idempotent" in submit["description"]
+    assert {"400", "404", "409", "422", "503"}.issubset(submit["responses"])
+
+
+def test_evaluator_quota_error_is_retryable_without_losing_state():
+    class UnavailableEvaluator:
+        model_name = "unavailable-test-model"
+
+        def evaluate(self, candidate, question, response_text):
+            del candidate, question, response_text
+            raise EvaluationUnavailableError(retry_after_seconds=49)
+
+    client = make_client(UnavailableEvaluator())
+    started = client.post(
+        "/api/v1/assessments",
+        json={
+            "candidate": {
+                "name": "Quota Test",
+                "experience_level": "fresher",
+                "target_role": "AI Engineer",
+            }
+        },
+    ).json()
+    response = client.post(
+        f"/api/v1/assessments/{started['assessment_id']}/responses",
+        json={"question_id": started["question"]["id"], "content": "A valid answer."},
+    )
+    assert response.status_code == 503
+    assert response.headers["retry-after"] == "49"
+
+    resumed = client.get(f"/api/v1/assessments/{started['assessment_id']}").json()
+    assert resumed["questions_answered"] == 0
+    assert resumed["question"]["id"] == started["question"]["id"]

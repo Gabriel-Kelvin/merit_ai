@@ -17,6 +17,20 @@ from app.repositories.supabase import SupabaseAssessmentRepository
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+OPENAPI_TAGS = [
+    {
+        "name": "assessment",
+        "description": (
+            "Start, answer, resume, and inspect adaptive evidence-backed assessments. The AI "
+            "evaluates answers; deterministic application rules control flow and scoring."
+        ),
+    },
+    {
+        "name": "system",
+        "description": "Operational health and active backend configuration.",
+    },
+]
+
 
 def build_service(settings: Settings) -> AssessmentService:
     if settings.merit_storage_mode == "supabase":
@@ -46,9 +60,31 @@ def create_app(
         title="Merit AI Assessment API",
         version=settings.app_version,
         description=(
-            "Adaptive, evidence-backed engineering readiness assessment. AI evaluates evidence; "
-            "application code controls workflow, scoring, persistence, and recommendations."
+            "## An explainable adaptive engineering assessment\n\n"
+            "Merit AI asks questions grounded in a candidate's own projects and changes its next "
+            "move after every answer. Each response produces rubric-signal verdicts, evidence, a "
+            "calibrated score, and confidence.\n\n"
+            "### Trust boundaries\n"
+            "- Gemini performs constrained, structured evidence evaluation.\n"
+            "- Application code controls dimension coverage, follow-ups, stopping, weighting, and "
+            "classification.\n"
+            "- Supabase stores every accepted question, answer, evaluation, and final audit "
+            "trace.\n"
+            "- Repeated identical submissions are replayed safely instead of evaluated twice.\n\n"
+            "The practical IDE challenge, payment, GitHub integration, and deployment concerns are "
+            "intentionally outside this API's current scope."
         ),
+        openapi_tags=OPENAPI_TAGS,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        swagger_ui_parameters={
+            "displayRequestDuration": True,
+            "filter": True,
+            "operationsSorter": "method",
+            "tagsSorter": "alpha",
+            "tryItOutEnabled": True,
+        },
     )
     app.state.assessment_service = service or build_service(settings)
     app.state.settings = settings
@@ -88,7 +124,13 @@ def create_app(
         response.headers["X-Request-ID"] = request_id
         return response
 
-    @app.get("/health", tags=["system"])
+    @app.get(
+        "/health",
+        tags=["system"],
+        summary="Check API health",
+        description="Confirms the process is healthy and identifies active storage and AI modes.",
+        operation_id="getHealth",
+    )
     def health() -> dict:
         return {
             "status": "ok",

@@ -211,6 +211,12 @@ class SupabaseAssessmentRepository:
                 "prompt": question.prompt,
                 "intent": question.intent,
                 "expected_signals": question.expected_signals,
+                "personalization_context": question.personalization_context,
+                "is_follow_up": question.is_follow_up,
+                "parent_question_public_id": (
+                    str(question.parent_question_id) if question.parent_question_id else None
+                ),
+                "adaptation_reason": question.adaptation_reason,
             }
         ).execute()
 
@@ -225,6 +231,10 @@ class SupabaseAssessmentRepository:
             prompt=row["prompt"],
             intent=row["intent"],
             expected_signals=row["expected_signals"],
+            personalization_context=row.get("personalization_context"),
+            is_follow_up=row.get("is_follow_up", False),
+            parent_question_id=row.get("parent_question_public_id"),
+            adaptation_reason=row.get("adaptation_reason") or "Initial capability probe",
         )
 
     @staticmethod
@@ -267,6 +277,7 @@ class SupabaseAssessmentRepository:
                 "model": result.model,
                 "prompt_version": result.prompt_version,
                 "rubric_version": result.rubric_version,
+                "result_json": result.model_dump(mode="json"),
             },
             on_conflict="assessment_id",
         ).execute()
@@ -283,6 +294,8 @@ class SupabaseAssessmentRepository:
         if not rows:
             return None
         row = rows[0]
+        if row.get("result_json"):
+            return AssessmentResult.model_validate(row["result_json"])
         dimensions = (
             self.client.table("assessment_dimension_scores")
             .select("*")
@@ -290,6 +303,11 @@ class SupabaseAssessmentRepository:
             .execute()
             .data
         )
+        recommendation = dict(row["recommendation"])
+        priorities = recommendation.get("priority_capabilities") or ["Engineering Fundamentals"]
+        recommendation.setdefault("top_development_priority", priorities[0])
+        recommendation.setdefault("why", recommendation.get("rationale", "Evidence was limited."))
+        recommendation["proof_of_improvement_challenge"] = None
         return AssessmentResult(
             assessment_id=public_id,
             readiness_score=row["overall_score"],
@@ -299,7 +317,7 @@ class SupabaseAssessmentRepository:
             gaps=row["gaps"],
             evidence_summary=row["evidence_summary"],
             summary=row["summary"],
-            recommendation=row["recommendation"],
+            recommendation=recommendation,
             model=row["model"],
             prompt_version=row["prompt_version"],
             rubric_version=row["rubric_version"],

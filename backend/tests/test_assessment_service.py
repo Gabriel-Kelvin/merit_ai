@@ -55,6 +55,27 @@ def test_weak_answer_triggers_focused_follow_up(service, candidate):
     assert submitted.question is not None
     assert submitted.question.dimension == started.question.dimension
     assert submitted.evaluation.follow_up_required is True
+    assert submitted.adaptive_decision.action == "probe_gap"
+    assert submitted.question.is_follow_up is True
+    assert submitted.question.parent_question_id == started.question.id
+
+
+def test_strong_answer_increases_difficulty(service, candidate):
+    started = service.start(candidate)
+    submitted = service.submit(
+        started.assessment_id,
+        started.question.id,
+        (
+            "I map the data flow from React through FastAPI to PostgreSQL. I use schema validation "
+            "at the boundary, explicit failure handling with safe user errors and structured logs, "
+            "and verification through integration tests, database constraints, and observed traces "
+            "before release. I also document transaction ownership and rollback behavior."
+        ),
+    )
+    assert submitted.adaptive_decision.action == "stretch"
+    assert submitted.question is not None
+    assert submitted.question.difficulty == "advanced"
+    assert "identical requests" in submitted.question.prompt
 
 
 def test_duplicate_submission_is_rejected(service, candidate):
@@ -70,6 +91,20 @@ def test_duplicate_submission_is_rejected(service, candidate):
             started.question.id,
             "Submitting the same answer again must fail.",
         )
+
+
+def test_identical_submission_is_idempotently_replayed(service, candidate):
+    started = service.start(candidate)
+    content = "I would send it to the backend, validate it, and save it."
+    original = service.submit(started.assessment_id, started.question.id, content)
+    replay = service.submit(
+        started.assessment_id,
+        started.question.id,
+        "  I would send it to the backend, validate it, and save it.  ",
+    )
+    assert replay.replayed is True
+    assert replay.adaptive_decision.action == "replay"
+    assert replay.evaluation == original.evaluation
 
 
 def test_wrong_question_is_rejected(service, candidate):
@@ -102,4 +137,7 @@ def test_complete_assessment_returns_evidence_backed_result(service, candidate):
     assert final.result is not None
     assert len(final.result.dimensions) == 5
     assert final.result.readiness_score > 0
-    assert final.result.recommendation.proof_of_improvement_challenge
+    assert final.result.recommendation.proof_of_improvement_challenge is None
+    assert final.result.evaluation_trace
+    assert final.result.overall_confidence > 0
+    assert all(item.rationale for item in final.result.dimensions)

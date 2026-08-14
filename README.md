@@ -1,73 +1,68 @@
 # Merit AI
 
-Merit AI is an adaptive, evidence-backed engineering readiness assessment. It behaves like a structured
-senior interviewer: questions respond to a candidate's background and previous evidence, practical
-challenges test real engineering judgment, and every score remains explainable.
+Merit AI is an adaptive, evidence-backed engineering readiness assessment. It behaves like a structured senior interviewer: questions respond to a candidate's background and previous evidence, difficulty changes when warranted, and every score remains explainable.
 
-## Sprint 1 status
+## Assessment engine
 
-The FastAPI assessment engine supports:
+The FastAPI backend supports:
 
-- personalised first questions based on candidate projects and target role;
-- controlled coverage of engineering fundamentals, problem solving, AI fluency, agentic engineering,
-  and communication;
-- one focused follow-up when evidence is weak, without sacrificing dimension coverage;
-- practical debugging and agent-instruction challenges;
-- Gemini structured-output evaluation with Pydantic validation;
-- deterministic application-owned scoring and readiness classification;
-- evidence, confidence, strengths, gaps, report, pathway, and proof-of-improvement challenge;
-- resumable persistence through the Supabase repository;
-- duplicate-response protection and a stable API contract.
+- personalised questions using candidate projects, stack, target role, and AI tools;
+- controlled coverage of engineering fundamentals, problem solving, AI fluency, agentic engineering, and communication;
+- visible per-answer decisions: probe a gap, increase difficulty, advance, or stop;
+- intelligent stopping based on evidence quantity, quality, confidence, and dimension coverage;
+- Gemini structured-output evaluation with prompt-injection boundaries and deterministic calibration;
+- application-owned scoring with confidence gating and evidence-quality adjustment;
+- signal-level verdicts, confidence labels, limiting gaps, and a complete evaluation trace;
+- resumable Supabase persistence;
+- idempotent replay plus database-level duplicate-response protection;
+- fully described Swagger and ReDoc contracts with examples and documented errors.
 
-## Sprint 2 vertical slice
+## Candidate experience
 
-The React candidate experience now includes:
+The React candidate application includes:
 
 - a premium, focused landing experience;
 - candidate profile and project-context capture;
 - one-question-at-a-time adaptive assessment presentation;
 - professional processing and recoverable error states;
-- browser refresh/resume using only a versioned assessment identifier;
-- readiness score, dimension evidence, strengths, gaps, and recommendation;
-- proof-of-improvement challenge and printable report;
-- responsive layouts verified at desktop and mobile widths.
+- refresh/resume using a versioned assessment identifier;
+- readiness score, dimension evidence, confidence, strengths, gaps, and recommendations;
+- a specific development priority and printable report;
+- responsive desktop and mobile layouts.
 
 ## Architecture
 
 ```text
-API client / Sprint 2 React app
-            |
-            v
-         FastAPI
-            |
-     AssessmentService
-       /           \
+API client / React candidate app
+              |
+              v
+           FastAPI
+              |
+       AssessmentService
+         /           \
 QuestionPlanner   GeminiEvaluator
-       \           /
-       evidence + deterministic scoring
+         \           /
+       evidence + deterministic calibration
                    |
                    v
             Supabase/PostgreSQL
 ```
 
-The model evaluates evidence. Python controls state transitions, question coverage, score calculations,
-classification, persistence, and recommendations.
+Gemini evaluates evidence. Python controls state transitions, capability coverage, difficulty, stopping, score calculations, classification, persistence, and recommendations.
 
 ## API
 
-- `POST /api/v1/assessments` — create an assessment and receive the first question
-- `POST /api/v1/assessments/{id}/responses` — evaluate a response and receive the next state
-- `GET /api/v1/assessments/{id}` — retrieve/resume the current assessment
-- `GET /api/v1/assessments/{id}/result` — retrieve the completed readiness result
-- `GET /health` — health/configuration summary without exposing secrets
-- `/docs` — interactive FastAPI Swagger demonstration
+- `POST /api/v1/assessments` - start an assessment and receive a personalised question
+- `POST /api/v1/assessments/{id}/responses` - evaluate an answer and receive the adaptive decision
+- `GET /api/v1/assessments/{id}` - retrieve or resume the exact assessment state
+- `GET /api/v1/assessments/{id}/result` - retrieve the completed evidence-backed result
+- `GET /api/v1/assessment-methodology` - inspect rubric weights and adaptive stopping rules
+- `GET /health` - health and active backend configuration without secrets
+- `/docs` - interactive Swagger UI
+- `/redoc` - structured API reference
+- `/openapi.json` - OpenAPI 3 contract
 
 ## Local setup
-
-1. Copy `.env.example` to `.env` and fill the required values.
-2. Create and activate a Python 3.11 virtual environment.
-3. Install the backend and development dependencies.
-4. Run tests, then start Uvicorn.
 
 ```powershell
 cd backend
@@ -77,9 +72,9 @@ python -m venv .venv
 .\.venv\Scripts\python -m uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` for the Sprint 1 demo.
+Open `http://127.0.0.1:8000/docs` for the backend demonstration.
 
-Start the candidate application in a second terminal:
+Start the candidate app in a second terminal:
 
 ```powershell
 cd frontend
@@ -87,17 +82,10 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173` for the product demo.
+Open `http://127.0.0.1:5173` for the candidate experience.
 
-## Environment variables
+## Security and scope
 
-See `.env.example`. `SUPABASE_SECRET_KEY` is backend-only and must never use a `VITE_` prefix or be
-placed in the frontend. `.env` is intentionally ignored by Git.
+`SUPABASE_SECRET_KEY` is backend-only and must never use a `VITE_` prefix or be placed in the frontend. `.env` is intentionally ignored by Git. Browser roles cannot directly access assessment tables; business operations flow through FastAPI.
 
-## Known limitations
-
-- Sprint 1 accepts text responses. Voice transcription belongs to Sprint 2 and is optional.
-- Authentication UI and candidate ownership validation are the next security milestone. Database tables
-  are already inaccessible to browser roles; all business operations flow through FastAPI.
-- The repository can run in explicit `memory` mode for automated tests. The real application should use
-  `supabase` mode.
+The practical IDE challenge, payment, GitHub integration, and deployment are intentionally out of scope while the assessment backend is being perfected. Assessments currently accept text responses; voice transcription remains optional.

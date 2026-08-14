@@ -33,6 +33,10 @@ export interface Question {
   prompt: string
   intent: string
   expected_signals: string[]
+  personalization_context?: string
+  is_follow_up: boolean
+  parent_question_id?: string
+  adaptation_reason: string
 }
 
 export interface EvidenceItem {
@@ -48,6 +52,10 @@ export interface DimensionScore {
   evidence_count: number
   strengths: string[]
   gaps: string[]
+  evidence_quality: number
+  confidence_label: string
+  rationale: string
+  limiting_gap?: string
 }
 
 export interface Recommendation {
@@ -56,7 +64,9 @@ export interface Recommendation {
   rationale: string
   priority_capabilities: string[]
   next_actions: string[]
-  proof_of_improvement_challenge: string
+  top_development_priority: string
+  why: string
+  proof_of_improvement_challenge?: string | null
 }
 
 export interface AssessmentResult {
@@ -69,6 +79,8 @@ export interface AssessmentResult {
   evidence_summary: EvidenceItem[]
   summary: string
   recommendation: Recommendation
+  overall_confidence: number
+  confidence_label: string
 }
 
 export interface AssessmentState {
