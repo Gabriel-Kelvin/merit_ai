@@ -155,6 +155,9 @@ class ResponseEvaluation(BaseModel):
     signal_assessments: list[SignalAssessment] = Field(default_factory=list)
     answer_relevance: float = Field(default=1.0, ge=0, le=1)
     integrity_flags: list[str] = Field(default_factory=list, max_length=4)
+    evaluator_model: str | None = Field(
+        default=None, description="Server-recorded model that produced this evaluation."
+    )
     reasoning_summary: str = Field(
         description="A concise assessor explanation without hidden chain-of-thought."
     )
@@ -200,6 +203,7 @@ class EvaluationTraceItem(BaseModel):
     evidence: list[EvidenceItem] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    evaluator_model: str | None = None
 
 
 class Recommendation(BaseModel):

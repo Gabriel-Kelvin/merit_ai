@@ -84,6 +84,7 @@ def build_result(session: AssessmentSession, model_name: str) -> AssessmentResul
             evidence=record.evaluation.evidence,
             strengths=record.evaluation.strengths,
             gaps=record.evaluation.gaps,
+            evaluator_model=record.evaluation.evaluator_model,
         )
         for record in session.records
     ]

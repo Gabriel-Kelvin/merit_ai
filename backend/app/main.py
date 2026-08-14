@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router
-from app.assessment.evaluator import DeterministicEvaluator, GeminiEvaluator
+from app.assessment.evaluator import (
+    DeterministicEvaluator,
+    FallbackEvaluator,
+    GeminiEvaluator,
+    OpenRouterEvaluator,
+)
 from app.assessment.service import AssessmentService
 from app.config import Settings, get_settings
 from app.repositories.memory import MemoryAssessmentRepository
@@ -40,11 +45,20 @@ def build_service(settings: Settings) -> AssessmentService:
     else:
         repository = MemoryAssessmentRepository()
 
-    evaluator = (
+    primary = (
         GeminiEvaluator(settings.gemini_api_key, settings.gemini_model)
         if settings.gemini_api_key
-        else DeterministicEvaluator()
+        else None
     )
+    fallback = (
+        OpenRouterEvaluator(settings.openrouter_api_key, settings.openrouter_model)
+        if settings.openrouter_api_key
+        else None
+    )
+    if primary and fallback:
+        evaluator = FallbackEvaluator(primary, fallback)
+    else:
+        evaluator = primary or fallback or DeterministicEvaluator()
     return AssessmentService(
         repository=repository,
         evaluator=evaluator,

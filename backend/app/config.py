@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash-lite"
+    gemini_model: str = "gemini-3.1-flash-lite"
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openrouter/free"
 
     supabase_url: str = ""
     supabase_publishable_key: str = ""

@@ -11,6 +11,8 @@ The FastAPI backend supports:
 - visible per-answer decisions: probe a gap, increase difficulty, advance, or stop;
 - intelligent stopping based on evidence quantity, quality, confidence, and dimension coverage;
 - Gemini structured-output evaluation with prompt-injection boundaries and deterministic calibration;
+- Gemini 3.1 Flash-Lite as primary with an OpenRouter free-model-only fallback;
+- per-response evaluator model auditing when fallback is used;
 - application-owned scoring with confidence gating and evidence-quality adjustment;
 - signal-level verdicts, confidence labels, limiting gaps, and a complete evaluation trace;
 - resumable Supabase persistence;

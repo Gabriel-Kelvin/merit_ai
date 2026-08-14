@@ -1,7 +1,16 @@
 from uuid import uuid4
 
-from app.assessment.evaluator import GeminiEvaluator, _retry_after_seconds
+import pytest
+
+from app.assessment.evaluator import (
+    EvaluationUnavailableError,
+    FallbackEvaluator,
+    GeminiEvaluator,
+    OpenRouterEvaluator,
+    _retry_after_seconds,
+)
 from app.assessment.models import (
+    CandidateContext,
     Difficulty,
     Dimension,
     Question,
@@ -88,3 +97,48 @@ def test_provider_retry_delay_is_bounded_and_parseable():
     assert _retry_after_seconds("Please retry in 48.877s") == 49
     assert _retry_after_seconds("retryDelay': '7s'") == 8
     assert _retry_after_seconds("No delay supplied") == 60
+
+
+def test_openrouter_fallback_rejects_non_free_models():
+    with pytest.raises(ValueError, match="free"):
+        OpenRouterEvaluator("test-key", "anthropic/claude-sonnet")
+
+
+def test_fallback_uses_secondary_only_when_primary_is_unavailable():
+    expected = ResponseEvaluation(
+        score=72,
+        confidence=0.8,
+        evidence=[],
+        strengths=["Uses explicit verification"],
+        gaps=[],
+        follow_up_required=False,
+        reasoning_summary="The fallback returned a valid structured evaluation.",
+    )
+
+    class Primary:
+        model_name = "primary-model"
+
+        def evaluate(self, candidate, question, response_text):
+            del candidate, question, response_text
+            raise EvaluationUnavailableError(30)
+
+    class FreeFallback:
+        model_name = "test/free-model:free"
+
+        def evaluate(self, candidate, question, response_text):
+            del candidate, question, response_text
+            return expected
+
+    evaluator = FallbackEvaluator(Primary(), FreeFallback())
+    result = evaluator.evaluate(
+        CandidateContext(
+            name="Fallback Test",
+            experience_level="fresher",
+            target_role="AI Engineer",
+        ),
+        engineering_question(),
+        "A relevant answer.",
+    )
+
+    assert result == expected
+    assert evaluator.model_name.endswith(":free")
