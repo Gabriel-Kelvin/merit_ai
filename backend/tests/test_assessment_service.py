@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.assessment.evaluator import DeterministicEvaluator
+from app.assessment.evaluator import DeterministicEvaluator, EvaluationUnavailableError
 from app.assessment.models import CandidateContext, ProjectExperience
 from app.assessment.service import (
     AssessmentService,
@@ -35,47 +35,125 @@ def candidate() -> CandidateContext:
 @pytest.fixture
 def service() -> AssessmentService:
     return AssessmentService(
-        MemoryAssessmentRepository(), DeterministicEvaluator(), max_questions=7
+        MemoryAssessmentRepository(), DeterministicEvaluator(), max_questions=20
     )
 
 
 def test_personalized_first_question(service, candidate):
     started = service.start(candidate)
-    assert "Campus support assistant" in started.question.prompt
+    assert started.question.prompt.startswith("Tell me about yourself")
+    assert started.question.assessment_area == "introduction"
+    assert started.question.time_limit_seconds in {120, 180, 300}
+    assert started.question.expires_at is not None
     assert started.progress == 0
 
 
-def test_weak_answer_triggers_focused_follow_up(service, candidate):
+def test_start_recovers_with_role_specific_blueprint_when_providers_are_busy(candidate):
+    class PlanningUnavailable(DeterministicEvaluator):
+        def plan_assessment(self, candidate):
+            del candidate
+            raise EvaluationUnavailableError(30)
+
+    recovering_service = AssessmentService(
+        MemoryAssessmentRepository(), PlanningUnavailable(), max_questions=20
+    )
+
+    started = recovering_service.start(candidate)
+    state = recovering_service.get_state(started.assessment_id)
+
+    assert started.question.prompt.startswith("Tell me about yourself")
+    assert state.dimension_progress
+    assert all("AI Engineer" in item.label for item in state.dimension_progress[:1])
+
+
+def test_mechanical_role_receives_domain_specific_capabilities(service):
+    candidate = CandidateContext(
+        name="Ananya Rao",
+        education="B.E. Mechanical Engineering",
+        experience_level="fresher",
+        target_role="Mechanical Design Engineer",
+        technical_skills=["SolidWorks", "ANSYS", "GD&T"],
+    )
+
+    started = service.start(candidate)
+    state = service.get_state(started.assessment_id)
+    labels = [item.label.lower() for item in state.dimension_progress]
+
+    assert started.question.prompt.startswith("Tell me about yourself")
+    assert not any("agentic" in label or "ai fluency" in label for label in labels)
+
+
+def test_topic_switch_updates_langgraph_memory_and_redirects(service, candidate):
+    started = service.start(candidate)
+    redirected = service.submit(
+        started.assessment_id,
+        started.question.id,
+        "I don't know. Please ask me something else on an unrelated topic.",
+    )
+
+    state = service.repository.get(started.assessment_id)
+    assert redirected.adaptive_decision.action == "change_topic"
+    assert redirected.question is not None
+    assert redirected.question.assessment_area != started.question.assessment_area
+    assert state is not None
+    assert state.memory.graph_version == "langgraph-v1"
+    assert state.memory.avoided_topics
+    assert state.memory.conversation_summary
+
+
+def test_expired_blank_answer_is_recorded_and_advances(service, candidate):
     started = service.start(candidate)
     submitted = service.submit(
         started.assessment_id,
         started.question.id,
+        "",
+        submission_reason="time_expired",
+        time_spent_seconds=180,
+    )
+
+    state = service.repository.get(started.assessment_id)
+    assert submitted.question is not None
+    assert state is not None
+    assert state.records[0].response_text == ""
+    assert state.records[0].submission_reason == "time_expired"
+    assert state.records[0].time_spent_seconds == 180
+
+
+def test_weak_answer_triggers_focused_follow_up(service, candidate):
+    started = service.start(candidate)
+    after_intro = service.submit(
+        started.assessment_id,
+        started.question.id,
+        "I would send it to the backend and save it.",
+    )
+    submitted = service.submit(
+        started.assessment_id,
+        after_intro.question.id,
         "I would send it to the backend and save it.",
     )
     assert submitted.question is not None
-    assert submitted.question.dimension == started.question.dimension
+    assert submitted.question.dimension == after_intro.question.dimension
     assert submitted.evaluation.follow_up_required is True
     assert submitted.adaptive_decision.action == "probe_gap"
     assert submitted.question.is_follow_up is True
-    assert submitted.question.parent_question_id == started.question.id
+    assert submitted.question.parent_question_id == after_intro.question.id
 
 
-def test_strong_answer_increases_difficulty(service, candidate):
+def test_strong_answer_advances_to_next_role_specific_capability(service, candidate):
     started = service.start(candidate)
     submitted = service.submit(
         started.assessment_id,
         started.question.id,
         (
-            "I map the data flow from React through FastAPI to PostgreSQL. I use schema validation "
-            "at the boundary, explicit failure handling with safe user errors and structured logs, "
-            "and verification through integration tests, database constraints, and observed traces "
-            "before release. I also document transaction ownership and rollback behavior."
+            "I apply the correct principles to a concrete applied example, document constraints, "
+            "compare trade-offs, and verify the result against objective acceptance criteria. "
+            "I record the evidence, review failure cases, and communicate the decision clearly."
         ),
     )
-    assert submitted.adaptive_decision.action == "stretch"
+    assert submitted.adaptive_decision.action == "advance"
     assert submitted.question is not None
-    assert submitted.question.difficulty == "advanced"
-    assert "identical requests" in submitted.question.prompt
+    assert submitted.question.assessment_area == "experience"
+    assert submitted.question.dimension != started.question.dimension
 
 
 def test_duplicate_submission_is_rejected(service, candidate):
@@ -113,6 +191,32 @@ def test_wrong_question_is_rejected(service, candidate):
         service.submit(started.assessment_id, uuid4(), "A valid but mismatched answer")
 
 
+def test_question_generation_failure_does_not_persist_the_answer(candidate):
+    class FailsAfterEvaluation(DeterministicEvaluator):
+        def generate_question(
+            self, candidate, blueprint, dimension, history, action, focus
+        ):
+            if history:
+                raise EvaluationUnavailableError(20)
+            return super().generate_question(
+                candidate, blueprint, dimension, history, action, focus
+            )
+
+    service = AssessmentService(
+        MemoryAssessmentRepository(), FailsAfterEvaluation(), max_questions=7
+    )
+    started = service.start(candidate)
+
+    with pytest.raises(EvaluationUnavailableError):
+        service.submit(
+            started.assessment_id,
+            started.question.id,
+            "A response with enough content to require a next adaptive question.",
+        )
+
+    assert service.get_state(started.assessment_id).questions_answered == 0
+
+
 def test_complete_assessment_returns_evidence_backed_result(service, candidate):
     state = service.start(candidate)
     final = None
@@ -135,7 +239,7 @@ def test_complete_assessment_returns_evidence_backed_result(service, candidate):
     assert final.status == "completed"
     assert final.progress == 100
     assert final.result is not None
-    assert len(final.result.dimensions) == 5
+    assert len(final.result.dimensions) == 3
     assert final.result.readiness_score > 0
     assert final.result.recommendation.proof_of_improvement_challenge is None
     assert final.result.evaluation_trace

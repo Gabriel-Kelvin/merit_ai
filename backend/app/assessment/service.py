@@ -4,6 +4,7 @@ from threading import RLock
 from uuid import UUID, uuid4
 
 from app.assessment.evaluator import Evaluator
+from app.assessment.graph import LangGraphAssessmentController
 from app.assessment.models import (
     AdaptiveAction,
     AdaptiveDecision,
@@ -12,10 +13,12 @@ from app.assessment.models import (
     AssessmentStateResponse,
     AssessmentStatus,
     EvaluationRecord,
+    Question,
     StartAssessmentResponse,
+    SubmissionReason,
     SubmitResponseResponse,
 )
-from app.assessment.questioning import QuestionPlanner
+from app.assessment.questioning import QuestionPlanner, concise_prompt
 from app.assessment.scoring import build_dimension_progress, build_result
 from app.repositories.base import AssessmentRepository
 
@@ -47,6 +50,7 @@ class AssessmentService:
         self.repository = repository
         self.evaluator = evaluator
         self.planner = planner or QuestionPlanner()
+        self.controller = LangGraphAssessmentController(evaluator, self.planner)
         self.max_questions = max_questions
         self._submission_lock = RLock()
 
@@ -56,7 +60,7 @@ class AssessmentService:
             candidate=candidate,
             max_questions=self.max_questions,
         )
-        question = self.planner.first_question(session)
+        question = self.controller.initialize(session)
         session.questions.append(question)
         session.current_question = question
         self.repository.create(session)
@@ -69,13 +73,29 @@ class AssessmentService:
         )
 
     def submit(
-        self, assessment_id: UUID, question_id: UUID, content: str
+        self,
+        assessment_id: UUID,
+        question_id: UUID,
+        content: str,
+        submission_reason: SubmissionReason = SubmissionReason.MANUAL,
+        time_spent_seconds: int | None = None,
     ) -> SubmitResponseResponse:
         with self._submission_lock:
-            return self._submit_locked(assessment_id, question_id, content)
+            return self._submit_locked(
+                assessment_id,
+                question_id,
+                content,
+                submission_reason,
+                time_spent_seconds,
+            )
 
     def _submit_locked(
-        self, assessment_id: UUID, question_id: UUID, content: str
+        self,
+        assessment_id: UUID,
+        question_id: UUID,
+        content: str,
+        submission_reason: SubmissionReason,
+        time_spent_seconds: int | None,
     ) -> SubmitResponseResponse:
         session = self._get_or_raise(assessment_id)
         existing = next(
@@ -95,7 +115,7 @@ class AssessmentService:
                     ),
                     evidence_sufficient=True,
                 ),
-                question=session.current_question,
+                question=_display_question(session.current_question),
                 result=session.result,
                 replayed=True,
             )
@@ -111,11 +131,13 @@ class AssessmentService:
             question=session.current_question,
             response_text=content,
             evaluation=evaluation,
+            submission_reason=submission_reason,
+            time_spent_seconds=time_spent_seconds,
         )
-        self.repository.add_response(assessment_id, record)
         session.records.append(record)
 
-        next_question, adaptive_decision = self.planner.next_question(session, evaluation)
+        next_question, adaptive_decision = self.controller.advance(session, evaluation)
+        self.repository.add_response(assessment_id, record)
         if next_question:
             session.questions.append(next_question)
             session.current_question = next_question
@@ -132,7 +154,7 @@ class AssessmentService:
             progress=session.progress,
             evaluation=evaluation,
             adaptive_decision=adaptive_decision,
-            question=next_question,
+            question=_display_question(next_question),
             result=session.result,
         )
 
@@ -143,10 +165,11 @@ class AssessmentService:
             status=session.status,
             progress=session.progress,
             candidate=session.candidate,
-            question=session.current_question,
+            question=_display_question(session.current_question),
             questions_answered=len(session.records),
             max_questions=session.max_questions,
             dimension_progress=build_dimension_progress(session),
+            memory=session.memory,
             result=session.result,
         )
 
@@ -165,3 +188,10 @@ class AssessmentService:
 
 def _normalize_answer(value: str) -> str:
     return " ".join(value.split())
+
+
+def _display_question(question: Question | None) -> Question | None:
+    if question is None:
+        return None
+    prompt = concise_prompt(question.prompt)
+    return question if prompt == question.prompt else question.model_copy(update={"prompt": prompt})

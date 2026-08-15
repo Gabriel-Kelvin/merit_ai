@@ -1,16 +1,50 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
-import { getAssessment, startAssessment, submitResponse } from './api'
+import {
+  getAssessment,
+  getCurrentUser,
+  getSavedProfile,
+  login,
+  logout,
+  saveCandidateProfile,
+  startAssessment,
+  submitResponse,
+} from './api'
 import { AppHeader } from './components/AppHeader'
 import { AssessmentScreen } from './components/AssessmentScreen'
 import { LandingPage } from './components/LandingPage'
+import { LoginScreen } from './components/LoginScreen'
 import { ProfileForm } from './components/ProfileForm'
+import { ProfilePage } from './components/ProfilePage'
 import { ResultsScreen } from './components/ResultsScreen'
-import type { AssessmentResult, CandidateContext, Question } from './types'
+import type {
+  AssessmentHistoryItem,
+  AssessmentResult,
+  CandidateContext,
+  CandidateProfileDraft,
+  Question,
+  SavedCandidateProfile,
+} from './types'
 
-type View = 'landing' | 'profile' | 'assessment' | 'results'
+type View = 'profile' | 'assessment' | 'results'
+type PublicView = 'landing' | 'login'
 
 const STORAGE_KEY = 'merit:assessment:v1'
+const CANDIDATE_KEY = 'merit:candidate:v1'
+const HISTORY_KEY = 'merit:history:v1'
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const value = localStorage.getItem(key)
+    return value ? JSON.parse(value) as T : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeJson(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* optional local history */ }
+}
 
 function readCachedAssessment(): string | null {
   try {
@@ -29,18 +63,116 @@ function cacheAssessment(id: string | null) {
   }
 }
 
+function draftFromCandidate(candidate: CandidateContext): CandidateProfileDraft {
+  return {
+    form_values: {
+      name: candidate.name,
+      email: candidate.email || '',
+      education: candidate.education || '',
+      graduation_year: candidate.graduation_year?.toString() || '',
+      experience_level: candidate.experience_level,
+      target_role: candidate.target_role,
+      skills: candidate.technical_skills.join(', '),
+    },
+    candidate,
+  }
+}
+
+function profileDraftWithAssessment(
+  profile: SavedCandidateProfile,
+  activeAssessmentId: string | null,
+  remainingSeconds: number | null = null,
+): CandidateProfileDraft {
+  return {
+    form_values: profile.form_values,
+    resume_profile: profile.resume_profile,
+    resume_context_text: profile.resume_context_text,
+    resume_name: profile.resume_name,
+    candidate: profile.candidate,
+    active_assessment_id: activeAssessmentId,
+    active_question_remaining_seconds: remainingSeconds,
+  }
+}
+
 function App() {
-  const [view, setView] = useState<View>('landing')
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [authLoading, setAuthLoading] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [publicView, setPublicView] = useState<PublicView>('landing')
+  const [view, setView] = useState<View>('profile')
   const [assessmentId, setAssessmentId] = useState<string | null>(null)
   const [question, setQuestion] = useState<Question | null>(null)
   const [result, setResult] = useState<AssessmentResult | null>(null)
+  const [candidate, setCandidate] = useState<CandidateContext | null>(() => readJson(CANDIDATE_KEY, null))
+  const [savedProfile, setSavedProfile] = useState<SavedCandidateProfile | null>(null)
+  const [history, setHistory] = useState<AssessmentHistoryItem[]>(() => readJson(HISTORY_KEY, []))
+  const [showProfileForm, setShowProfileForm] = useState(() => !readJson<CandidateContext | null>(CANDIDATE_KEY, null))
   const [progress, setProgress] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
   const [resumeChecked, setResumeChecked] = useState(false)
+  const [profileChecked, setProfileChecked] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pausedRemaining, setPausedRemaining] = useState<number | null>(null)
+  const savedActiveAssessmentId = savedProfile?.active_assessment_id
+  const savedProfileRef = useRef(savedProfile)
+  savedProfileRef.current = savedProfile
+
+  const rememberResult = useCallback((completedResult: AssessmentResult, targetRole?: string) => {
+    setHistory((current) => {
+      if (current.some((item) => item.assessment_id === completedResult.assessment_id)) return current
+      const next = [{
+        assessment_id: completedResult.assessment_id,
+        completed_at: new Date().toISOString(),
+        target_role: targetRole || 'Assessment',
+        result: completedResult,
+      }, ...current]
+      writeJson(HISTORY_KEY, next)
+      return next
+    })
+  }, [])
+
+  const rememberProfile = useCallback((profile: SavedCandidateProfile) => {
+    setSavedProfile(profile)
+    if (profile.candidate) {
+      setCandidate(profile.candidate)
+      writeJson(CANDIDATE_KEY, profile.candidate)
+    }
+  }, [])
 
   useEffect(() => {
-    const cachedId = readCachedAssessment()
+    getCurrentUser()
+      .then(() => setIsAuthenticated(true))
+      .catch(() => setIsAuthenticated(false))
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  useEffect(() => {
+    if (!authChecked || !isAuthenticated) return
+    const localCandidate = readJson<CandidateContext | null>(CANDIDATE_KEY, null)
+    getSavedProfile()
+      .then(async (profile) => {
+        if (!profile && localCandidate) {
+          profile = await saveCandidateProfile(draftFromCandidate(localCandidate))
+        }
+        setSavedProfile(profile)
+        setPausedRemaining(profile?.active_question_remaining_seconds ?? null)
+        if (profile?.candidate) {
+          setCandidate(profile.candidate)
+          writeJson(CANDIDATE_KEY, profile.candidate)
+          setShowProfileForm(false)
+        } else {
+          setShowProfileForm(true)
+        }
+      })
+      .catch(() => setShowProfileForm(!localCandidate))
+      .finally(() => setProfileChecked(true))
+  }, [authChecked, isAuthenticated])
+
+  useEffect(() => {
+    if (!authChecked || !isAuthenticated || !profileChecked) return
+    const profile = savedProfileRef.current
+    const cachedId = savedActiveAssessmentId || readCachedAssessment()
     if (!cachedId) {
       setResumeChecked(true)
       return
@@ -49,27 +181,92 @@ function App() {
       .then((state) => {
         setAssessmentId(cachedId)
         setProgress(state.progress)
+        if (state.candidate) {
+          setCandidate(state.candidate)
+          writeJson(CANDIDATE_KEY, state.candidate)
+        }
         if (state.status === 'completed' && state.result) {
           setResult(state.result)
           setView('results')
+          rememberResult(state.result, state.candidate?.target_role)
+          if (savedActiveAssessmentId && profile) {
+            void saveCandidateProfile(profileDraftWithAssessment(profile, null))
+              .then(rememberProfile)
+              .catch(() => undefined)
+          }
         } else if (state.question) {
           setQuestion(state.question)
-          setView('assessment')
+          setPausedRemaining((current) => current ?? state.question?.time_limit_seconds ?? null)
+          if (profile && savedActiveAssessmentId !== cachedId) {
+            void saveCandidateProfile(profileDraftWithAssessment(profile, cachedId))
+              .then(rememberProfile)
+              .catch(() => undefined)
+          }
         }
       })
       .catch(() => cacheAssessment(null))
       .finally(() => setResumeChecked(true))
-  }, [])
+  }, [authChecked, isAuthenticated, profileChecked, savedActiveAssessmentId, rememberProfile, rememberResult])
 
-  async function handleStart(candidate: CandidateContext) {
+  async function handleLogin(username: string, password: string) {
+    setAuthLoading(true)
+    setAuthError(null)
+    try {
+      await login(username, password)
+      setView('profile')
+      setProfileChecked(false)
+      setIsAuthenticated(true)
+    } catch (requestError) {
+      setAuthError(requestError instanceof Error ? requestError.message : 'Unable to sign in.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await logout()
+    } finally {
+      cacheAssessment(null)
+      setAssessmentId(null)
+      setQuestion(null)
+      setResult(null)
+      setResumeChecked(false)
+      setProfileChecked(false)
+      setSavedProfile(null)
+      setIsAuthenticated(false)
+      setPublicView('landing')
+      setView('profile')
+    }
+  }
+
+  async function handleStart(candidate: CandidateContext, freshlySaved?: SavedCandidateProfile) {
+    if (!document.fullscreenElement) {
+      void document.documentElement.requestFullscreen().catch(() => undefined)
+    }
     setIsLoading(true)
     setError(null)
     try {
+      const persisted = freshlySaved || await saveCandidateProfile({
+          ...draftFromCandidate(candidate),
+          resume_profile: savedProfile?.resume_profile,
+          resume_context_text: savedProfile?.resume_context_text,
+          resume_name: savedProfile?.resume_name,
+        })
+      setSavedProfile(persisted)
+      setCandidate(candidate)
+      writeJson(CANDIDATE_KEY, candidate)
       const state = await startAssessment(candidate)
       setAssessmentId(state.assessment_id)
       setQuestion(state.question)
       setProgress(state.progress)
+      setPausedRemaining(null)
       cacheAssessment(state.assessment_id)
+      const activeProfile = await saveCandidateProfile(
+        profileDraftWithAssessment(persisted, state.assessment_id),
+      ).catch(() => persisted)
+      rememberProfile(activeProfile)
+      setShowProfileForm(false)
       setView('assessment')
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to start assessment.')
@@ -78,22 +275,48 @@ function App() {
     }
   }
 
-  async function handleAnswer(content: string) {
-    if (!assessmentId || !question) return
+  async function handleAnswer(
+    content: string,
+    submissionReason: 'manual' | 'time_expired',
+    timeSpentSeconds: number,
+  ) {
+    if (!assessmentId || !question) return false
     setIsLoading(true)
     setError(null)
     try {
-      const state = await submitResponse(assessmentId, question.id, content)
+      const state = await submitResponse(
+        assessmentId,
+        question.id,
+        content,
+        submissionReason,
+        timeSpentSeconds,
+      )
       setProgress(state.progress)
       if (state.status === 'completed' && state.result) {
         setResult(state.result)
+        rememberResult(state.result, candidate?.target_role)
         setQuestion(null)
+        setPausedRemaining(null)
         setView('results')
+        if (savedProfile) {
+          void saveCandidateProfile(profileDraftWithAssessment(savedProfile, null))
+            .then(rememberProfile)
+            .catch(() => undefined)
+        }
       } else {
         setQuestion(state.question)
+        setPausedRemaining(null)
+        const profile = savedProfileRef.current
+        if (profile && assessmentId) {
+          void saveCandidateProfile(
+            profileDraftWithAssessment(profile, assessmentId, null),
+          ).then(rememberProfile).catch(() => undefined)
+        }
       }
+      return true
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Unable to evaluate response.')
+      return false
     } finally {
       setIsLoading(false)
     }
@@ -106,25 +329,94 @@ function App() {
     setResult(null)
     setProgress(0)
     setError(null)
+    setShowProfileForm(true)
     setView('profile')
   }
 
-  if (!resumeChecked) {
+  function pauseAssessment(remainingSeconds: number) {
+    setError(null)
+    setPausedRemaining(remainingSeconds)
+    const profile = savedProfileRef.current
+    if (profile && assessmentId) {
+      void saveCandidateProfile(
+        profileDraftWithAssessment(profile, assessmentId, remainingSeconds),
+      ).then(rememberProfile).catch(() => undefined)
+    }
+    setShowProfileForm(false)
+    setView('profile')
+  }
+
+  useEffect(() => {
+    if (view !== 'assessment' && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined)
+    }
+  }, [view])
+
+  if (!authChecked) {
+    return <div className="app-loading">Securing your workspace…</div>
+  }
+
+  if (!isAuthenticated) {
+    if (publicView === 'login') {
+      return (
+        <LoginScreen
+          onLogin={handleLogin}
+          onBack={() => {
+            setAuthError(null)
+            setPublicView('landing')
+          }}
+          isLoading={authLoading}
+          error={authError}
+        />
+      )
+    }
+    return (
+      <div className="app-shell public-shell">
+        <header className="site-header public-header">
+          <button className="wordmark" type="button" aria-label="Merit AI home">
+            <span className="wordmark-mark">M</span><span>Merit AI</span>
+          </button>
+          <button className="public-login-button" type="button" onClick={() => setPublicView('login')}>Log in</button>
+        </header>
+        <main><LandingPage onStart={() => setPublicView('login')} /></main>
+      </div>
+    )
+  }
+
+  if (!resumeChecked || !profileChecked) {
     return <div className="app-loading">Restoring your assessment…</div>
   }
 
   return (
-    <div className="app-shell">
-      <AppHeader
+    <div className={`app-shell${view === 'assessment' ? ' assessment-shell' : ''}`}>
+      {view !== 'assessment' ? <AppHeader
         activeView={view}
-        onHome={() => setView('landing')}
         onAssessment={() => (assessmentId ? setView(result ? 'results' : 'assessment') : startFresh())}
-        onProfile={startFresh}
-      />
+        onProfile={() => { setShowProfileForm(false); setView('profile') }}
+        onLogout={() => void handleLogout()}
+      /> : null}
       <main>
-        {view === 'landing' ? <LandingPage onStart={startFresh} /> : null}
         {view === 'profile' ? (
-          <ProfileForm onSubmit={handleStart} isLoading={isLoading} error={error} />
+          showProfileForm ? (
+            <ProfileForm
+              initialCandidate={candidate}
+              savedProfile={savedProfile}
+              onProfileSaved={rememberProfile}
+              onSubmit={handleStart}
+              isLoading={isLoading}
+              error={error}
+            />
+          ) : (
+            <ProfilePage
+              candidate={candidate}
+              activeAssessment={assessmentId && question ? { progress, questionNumber: question.sequence_no } : null}
+              history={history}
+              onContinue={() => setView('assessment')}
+              onBeginSaved={() => { if (candidate) void handleStart(candidate) }}
+              onEdit={() => { setError(null); setShowProfileForm(true) }}
+              onOpenReport={(item) => { setResult(item.result); setView('results') }}
+            />
+          )
         ) : null}
         {view === 'assessment' && question ? (
           <AssessmentScreen
@@ -132,6 +424,8 @@ function App() {
             progress={progress}
             isLoading={isLoading}
             error={error}
+            initialRemainingSeconds={pausedRemaining}
+            onExit={pauseAssessment}
             onSubmit={handleAnswer}
           />
         ) : null}

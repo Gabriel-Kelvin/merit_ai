@@ -6,8 +6,14 @@ Merit AI is an adaptive, evidence-backed engineering readiness assessment. It be
 
 The FastAPI backend supports:
 
-- personalised questions using candidate projects, stack, target role, and AI tools;
-- controlled coverage of engineering fundamentals, problem solving, AI fluency, agentic engineering, and communication;
+- an AI-generated capability blueprint tailored to each candidate's role and background;
+- role-native questions recomposed after every answer from accumulated evidence and uncertainty;
+- a checkpointed LangGraph controller for conversation memory, topic switching, coverage, and
+  state transitions;
+- a guaranteed “Tell me about yourself” opening followed by adaptive experience, project,
+  role-capability, and professional-judgment evidence gathering;
+- AI-selected 2, 3, or 5 minute limits with refresh-safe expiry and automatic partial submission;
+- dynamic early stopping with a hard maximum of 20 questions;
 - visible per-answer decisions: probe a gap, increase difficulty, advance, or stop;
 - intelligent stopping based on evidence quantity, quality, confidence, and dimension coverage;
 - Gemini structured-output evaluation with prompt-injection boundaries and deterministic calibration;
@@ -24,8 +30,12 @@ The FastAPI backend supports:
 The React candidate application includes:
 
 - a premium, focused landing experience;
-- candidate profile and project-context capture;
+- demo username/password authentication with a signed, HttpOnly session cookie and logout;
+- PDF, DOCX, and TXT resume parsing with selective profile autofill;
+- structured work history, achievements, certifications, projects, and readable resume context
+  retained for question personalization while the raw upload is discarded;
 - one-question-at-a-time adaptive assessment presentation;
+- browser-level question-copy and answer-paste deterrents;
 - professional processing and recoverable error states;
 - refresh/resume using a versioned assessment identifier;
 - readiness score, dimension evidence, confidence, strengths, gaps, and recommendations;
@@ -41,6 +51,8 @@ API client / React candidate app
            FastAPI
               |
        AssessmentService
+              |
+   LangGraph state controller
          /           \
 QuestionPlanner   GeminiEvaluator
          \           /
@@ -50,15 +62,21 @@ QuestionPlanner   GeminiEvaluator
             Supabase/PostgreSQL
 ```
 
-Gemini evaluates evidence. Python controls state transitions, capability coverage, difficulty, stopping, score calculations, classification, persistence, and recommendations.
+Gemini generates the role-specific blueprint and adaptive questions, then evaluates answer evidence.
+LangGraph updates the thread state and routes each transition. Python validates structured outputs
+and controls safe coverage, calibrated scoring, stopping, persistence, and recommendations.
 
 ## API
 
+- `POST /api/v1/auth/login` - create the demo session
+- `GET /api/v1/auth/me` - inspect the current session
+- `POST /api/v1/auth/logout` - clear the session
 - `POST /api/v1/assessments` - start an assessment and receive a personalised question
 - `POST /api/v1/assessments/{id}/responses` - evaluate an answer and receive the adaptive decision
 - `GET /api/v1/assessments/{id}` - retrieve or resume the exact assessment state
 - `GET /api/v1/assessments/{id}/result` - retrieve the completed evidence-backed result
 - `GET /api/v1/assessment-methodology` - inspect rubric weights and adaptive stopping rules
+- `POST /api/v1/resumes/parse` - extract supported profile fields without storing the raw resume
 - `GET /health` - health and active backend configuration without secrets
 - `/docs` - interactive Swagger UI
 - `/redoc` - structured API reference
@@ -86,8 +104,13 @@ npm run dev
 
 Open `http://127.0.0.1:5173` for the candidate experience.
 
+The default local demo credentials are `demo` / `MeritDemo@2026`. Change the demo password and
+session secret in `.env` before sharing the app beyond a controlled demonstration.
+
 ## Security and scope
 
 `SUPABASE_SECRET_KEY` is backend-only and must never use a `VITE_` prefix or be placed in the frontend. `.env` is intentionally ignored by Git. Browser roles cannot directly access assessment tables; business operations flow through FastAPI.
 
 The practical IDE challenge, payment, GitHub integration, and deployment are intentionally out of scope while the assessment backend is being perfected. Assessments currently accept text responses; voice transcription remains optional.
+
+The copy/paste controls are assessment-integrity deterrents, not an absolute browser security boundary. Screenshots, developer tools, and external devices cannot be reliably blocked by a web application.

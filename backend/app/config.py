@@ -14,7 +14,9 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_model: str = "gemini-3.5-flash-lite"
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
     openrouter_api_key: str = ""
     openrouter_model: str = "openrouter/free"
 
@@ -23,8 +25,11 @@ class Settings(BaseSettings):
     supabase_secret_key: str = ""
 
     merit_storage_mode: Literal["supabase", "memory"] = "supabase"
-    merit_max_questions: int = Field(default=7, ge=3, le=12)
+    merit_max_questions: int = Field(default=20, ge=3, le=20)
     frontend_origin: str = "http://localhost:5173"
+    merit_demo_username: str = "demo"
+    merit_demo_password: str = "MeritDemo@2026"
+    merit_session_secret: str = "development-only-change-me"
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",

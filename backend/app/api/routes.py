@@ -5,18 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.assessment.evaluator import EvaluationUnavailableError
 from app.assessment.models import (
-    DIMENSION_LABELS,
     AssessmentMethodologyResponse,
     AssessmentResult,
     AssessmentStateResponse,
     ErrorResponse,
-    MethodologyDimension,
     StartAssessmentRequest,
     StartAssessmentResponse,
     SubmitResponseRequest,
     SubmitResponseResponse,
 )
-from app.assessment.rubric import DIMENSION_ORDER, RUBRICS
 from app.assessment.service import (
     AssessmentCompletedError,
     AssessmentNotFoundError,
@@ -24,8 +21,9 @@ from app.assessment.service import (
     DuplicateResponseError,
     QuestionMismatchError,
 )
+from app.auth import require_demo_user
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_demo_user)])
 
 
 def get_service(request: Request) -> AssessmentService:
@@ -40,7 +38,8 @@ ServiceDependency = Annotated[AssessmentService, Depends(get_service)]
     response_model=AssessmentMethodologyResponse,
     summary="Inspect the assessment methodology",
     description=(
-        "Returns the public rubric, weights, evidence principles, and adaptive stopping rules. "
+        "Returns the public evidence principles and adaptive stopping rules. Role-specific "
+        "capabilities and weights are generated when each assessment starts. "
         "This endpoint makes the engine's evaluation contract inspectable without exposing model "
         "chain-of-thought or private credentials."
     ),
@@ -52,30 +51,24 @@ def get_methodology() -> AssessmentMethodologyResponse:
             "Score only evidence present in the candidate's answer.",
             "Do not reward verbosity, buzzwords, claimed seniority, or self-awarded scores.",
             "Ground every conclusion in a recorded evidence item and rubric signal.",
-            "Keep AI evaluation separate from deterministic workflow and final score calculation.",
+            "Generate capabilities from the candidate's role, resume, and professional context.",
+            "Generate every next question from accumulated answers, evidence, and uncertainty.",
+            "Use LangGraph state to track coverage, topic changes, skipped areas, and memory.",
+            "Keep AI content generation separate from score calibration and safety controls.",
         ],
         stopping_rules=[
-            "Weak, unclear, or low-confidence evidence triggers one focused probe when capacity "
+            "Weak, unclear, or low-confidence evidence may trigger a focused probe when capacity "
             "remains.",
-            "Strong, high-confidence fundamentals may trigger a higher-difficulty production "
-            "probe.",
-            "Sufficient evidence advances to the next capability without a redundant question.",
-            "All five capabilities receive coverage before optional probes consume the final "
-            "slots.",
-            "The assessment stops after capability coverage or the configured maximum question "
-            "count.",
+            "A request to skip or change topic redirects immediately and is retained in state.",
+            "Strong evidence may trigger a higher-difficulty role-specific stretch question.",
+            "Sufficient evidence advances to the next generated capability.",
+            "Every capability in the candidate-specific blueprint receives coverage before "
+            "optional probes consume remaining slots.",
+            "The assessment stops early when coverage is sufficient or at the hard maximum of "
+            "20 questions.",
+            "Every question receives an AI-selected 2, 3, or 5 minute window.",
         ],
-        dimensions=[
-            MethodologyDimension(
-                dimension=dimension,
-                label=DIMENSION_LABELS[dimension],
-                purpose=RUBRICS[dimension].purpose,
-                weight=RUBRICS[dimension].weight,
-                strong_signals=list(RUBRICS[dimension].strong_signals),
-                weak_signals=list(RUBRICS[dimension].weak_signals),
-            )
-            for dimension in DIMENSION_ORDER
-        ],
+        dimensions=[],
     )
 
 
@@ -86,17 +79,28 @@ def get_methodology() -> AssessmentMethodologyResponse:
     summary="Start an adaptive readiness assessment",
     description=(
         "Creates a durable assessment session and returns a question personalized from the "
-        "candidate's project, stack, target role, and experience. The workflow guarantees that "
-        "all rubric dimensions are covered before optional follow-up probes."
+        "candidate's resume, target role, experience, and projects. The AI first generates a "
+        "role-specific capability blueprint, while the opening question is always 'Tell me about "
+        "yourself' so the candidate's own narrative precedes resume-based probing."
     ),
     operation_id="startAssessment",
-    responses={422: {"model": ErrorResponse, "description": "Candidate context is invalid."}},
+    responses={
+        422: {"model": ErrorResponse, "description": "Candidate context is invalid."},
+        503: {"model": ErrorResponse, "description": "Dynamic assessment planning unavailable."},
+    },
 )
 def start_assessment(
     payload: StartAssessmentRequest,
     service: ServiceDependency,
 ) -> StartAssessmentResponse:
-    return service.start(payload.candidate)
+    try:
+        return service.start(payload.candidate)
+    except EvaluationUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Dynamic assessment planning is temporarily unavailable.",
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
 
 
 @router.post(
@@ -105,8 +109,9 @@ def start_assessment(
     summary="Evaluate a response and return the next adaptive state",
     description=(
         "Evaluates the active answer against explicit signals, persists its evidence, and returns "
-        "the engine's visible adaptive decision: probe a gap, increase difficulty, advance, or "
-        "complete. Repeating the same question ID and normalized answer is idempotent and replays "
+        "the LangGraph engine's visible adaptive decision: probe a gap, change topic, increase "
+        "difficulty, advance, or complete. Timer-expired partial and empty answers are accepted. "
+        "Repeating the same question ID and normalized answer is idempotent and replays "
         "the accepted state without a second AI call or database write."
     ),
     operation_id="submitAssessmentResponse",
@@ -127,7 +132,13 @@ def submit_response(
     service: ServiceDependency,
 ) -> SubmitResponseResponse:
     try:
-        return service.submit(assessment_id, payload.question_id, payload.content)
+        return service.submit(
+            assessment_id,
+            payload.question_id,
+            payload.content,
+            payload.submission_reason,
+            payload.time_spent_seconds,
+        )
     except AssessmentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DuplicateResponseError as exc:

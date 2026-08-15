@@ -1,16 +1,8 @@
-import type { AssessmentResult, Dimension } from '../types'
+import type { AssessmentResult } from '../types'
 
 interface ResultsScreenProps {
   result: AssessmentResult
   onReassess: () => void
-}
-
-const labels: Record<Dimension, string> = {
-  engineering_fundamentals: 'Engineering Fundamentals',
-  problem_solving: 'Problem Solving',
-  ai_fluency: 'AI Fluency',
-  agentic_engineering: 'Agentic Engineering',
-  communication: 'Communication',
 }
 
 function classificationLabel(value: string) {
@@ -25,78 +17,81 @@ export function ResultsScreen({ result, onReassess }: ResultsScreenProps) {
     <section className="results-page page-enter">
       <div className="results-hero">
         <div>
-          <p className="step-label">Your assessment</p>
+          <p className="step-label">Personalized assessment summary</p>
           <h1>Your readiness, made clear.</h1>
           <p>{result.summary}</p>
         </div>
-        <div className="score-block">
-          <strong>{result.readiness_score}</strong>
-          <span>Readiness score</span>
-          <em>{classificationLabel(result.classification)}</em>
+        <div className="score-block" aria-label={`Overall readiness score: ${result.readiness_score} out of 100`}>
+          <span>Overall readiness score</span>
+          <div><strong>{result.readiness_score}</strong><small>/ 100</small></div>
+          <p>One combined view of your assessment.</p>
         </div>
+      </div>
+
+      <div className="classification-panel">
+        <div>
+          <span>Readiness classification</span>
+          <h2>{classificationLabel(result.classification)}</h2>
+        </div>
+        <p>{result.recommendation.rationale}</p>
       </div>
 
       <div className="result-section">
         <div className="section-title">
           <span>01</span>
           <div>
-            <h2>Capability profile</h2>
-            <p>How your evidence performed across the assessed dimensions.</p>
+            <h2>Dimension-level assessment</h2>
+            <p>What your responses showed in each capability area.</p>
           </div>
         </div>
-        <div className="dimension-list">
+        <div className="dimension-assessment-list">
           {result.dimensions.map((item) => (
-            <div className="dimension-row" key={item.dimension} title={item.rationale}>
+            <article key={item.dimension}>
               <div>
-                <strong>{labels[item.dimension]}</strong>
-                <small>
-                  {item.evidence_count} credible signals · {item.confidence_label} confidence ·{' '}
-                  {item.evidence_quality}% evidence quality
-                </small>
+                <span>Capability area</span>
+                <h3>{item.label}</h3>
               </div>
-              <div className="score-bar"><span style={{ width: `${item.score}%` }} /></div>
-              <b>{item.score}</b>
-            </div>
+              {item.limiting_gap ? <small>{item.limiting_gap}</small> : <small>Evidence demonstrated across your responses.</small>}
+            </article>
           ))}
         </div>
       </div>
 
       <div className="result-columns">
         <div className="result-section compact">
-          <div className="section-title"><span>02</span><div><h2>Demonstrated strengths</h2><p>Capabilities supported by your responses.</p></div></div>
-          <ul className="finding-list strengths">{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul>
+          <div className="section-title"><span>02</span><div><h2>Key strengths</h2><p>Capabilities you demonstrated consistently.</p></div></div>
+          <ul className="finding-list">{result.strengths.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
         <div className="result-section compact">
-          <div className="section-title"><span>03</span><div><h2>Development priorities</h2><p>The gaps currently limiting your readiness.</p></div></div>
-          <ul className="finding-list gaps">{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul>
+          <div className="section-title"><span>03</span><div><h2>Capability gaps</h2><p>Areas where stronger evidence or practice would improve readiness.</p></div></div>
+          <ul className="finding-list">{result.gaps.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       </div>
 
       <div className="recommendation-panel">
-        <div className="recommendation-kicker">Recommended next step</div>
+        <div className="recommendation-kicker">04 · Recommended pathway</div>
         <div className="recommendation-grid">
           <div>
+            <span className="pathway-label">{classificationLabel(result.recommendation.pathway)}</span>
             <h2>{result.recommendation.title}</h2>
             <p>{result.recommendation.rationale}</p>
             <div className="priority-tags">{result.recommendation.priority_capabilities.map((item) => <span key={item}>{item}</span>)}</div>
           </div>
           <div className="challenge">
-            <span>Top development priority</span>
+            <span>Primary development focus</span>
             <h3>{result.recommendation.top_development_priority}</h3>
             <p>{result.recommendation.why}</p>
           </div>
         </div>
       </div>
 
-      <div className="report-evidence">
-        <div className="section-title"><span>04</span><div><h2>Why this result</h2><p>A sample of the evidence behind your score.</p></div></div>
-        <div className="evidence-grid">
-          {result.evidence_summary.slice(0, 6).map((item, index) => (
-            <article key={`${item.claim}-${index}`}>
-              <span>{item.strength}</span><h3>{item.claim}</h3><p>{item.support}</p>
-            </article>
+      <div className="result-section action-plan">
+        <div className="section-title"><span>05</span><div><h2>Your next steps</h2><p>A practical sequence for turning this assessment into progress.</p></div></div>
+        <ol>
+          {result.recommendation.next_actions.map((item, index) => (
+            <li key={`${item}-${index}`}><span>{String(index + 1).padStart(2, '0')}</span><p>{item}</p></li>
           ))}
-        </div>
+        </ol>
       </div>
 
       <div className="results-actions">

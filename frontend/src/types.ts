@@ -1,9 +1,8 @@
-export type Dimension =
-  | 'engineering_fundamentals'
-  | 'problem_solving'
-  | 'ai_fluency'
-  | 'agentic_engineering'
-  | 'communication'
+export type Dimension = string
+
+export interface AuthUser {
+  username: string
+}
 
 export interface ProjectExperience {
   name: string
@@ -19,15 +18,85 @@ export interface CandidateContext {
   target_role: string
   technical_skills: string[]
   projects: ProjectExperience[]
-  ai_tools_used: string[]
-  github_url?: string
-  linkedin_url?: string
+  resume_context?: {
+    professional_summary?: string | null
+    work_experience: ResumeWorkExperience[]
+    achievements: string[]
+    certifications: string[]
+    additional_context: string[]
+    source_filename?: string | null
+    source_text?: string | null
+  }
+}
+
+export interface ResumeWorkExperience {
+  title?: string | null
+  company?: string | null
+  start_date?: string | null
+  end_date?: string | null
+  description?: string | null
+  achievements: string[]
+  technologies: string[]
+}
+
+export interface ResumeProfile {
+  name?: string | null
+  email?: string | null
+  education?: string | null
+  graduation_year?: number | null
+  experience_level?: string | null
+  target_role?: string | null
+  professional_summary?: string | null
+  technical_skills: string[]
+  projects: Array<{
+    name?: string | null
+    description?: string | null
+    technologies: string[]
+  }>
+  work_experience: ResumeWorkExperience[]
+  achievements: string[]
+  certifications: string[]
+  additional_context: string[]
+}
+
+export interface ResumeParseResponse {
+  filename: string
+  profile: ResumeProfile
+  extracted_fields: string[]
+  warnings: string[]
+  parser_model: string
+  context_text: string
+}
+
+export interface SavedProfileFormValues {
+  name: string
+  email: string
+  education: string
+  graduation_year: string
+  experience_level: string
+  target_role: string
+  skills: string
+}
+
+export interface CandidateProfileDraft {
+  form_values: SavedProfileFormValues
+  resume_profile?: ResumeProfile | null
+  resume_context_text?: string | null
+  resume_name?: string | null
+  candidate?: CandidateContext | null
+  active_assessment_id?: string | null
+  active_question_remaining_seconds?: number | null
+}
+
+export interface SavedCandidateProfile extends CandidateProfileDraft {
+  updated_at: string
 }
 
 export interface Question {
   id: string
   sequence_no: number
   dimension: Dimension
+  dimension_label: string
   type: 'text' | 'scenario' | 'code_review' | 'debugging' | 'agent_instruction'
   difficulty: 'foundation' | 'standard' | 'advanced'
   prompt: string
@@ -37,6 +106,10 @@ export interface Question {
   is_follow_up: boolean
   parent_question_id?: string
   adaptation_reason: string
+  assessment_area: 'introduction' | 'experience' | 'project' | 'role_capability' | 'professional_judgment'
+  time_limit_seconds: 120 | 180 | 300
+  issued_at?: string | null
+  expires_at?: string | null
 }
 
 export interface EvidenceItem {
@@ -47,6 +120,7 @@ export interface EvidenceItem {
 
 export interface DimensionScore {
   dimension: Dimension
+  label: string
   score: number
   confidence: number
   evidence_count: number
@@ -87,6 +161,16 @@ export interface AssessmentState {
   assessment_id: string
   status: 'in_progress' | 'completed' | 'failed'
   progress: number
+  candidate?: CandidateContext
+  questions_answered?: number
+  max_questions?: number
   question: Question | null
   result?: AssessmentResult | null
+}
+
+export interface AssessmentHistoryItem {
+  assessment_id: string
+  completed_at: string
+  target_role: string
+  result: AssessmentResult
 }

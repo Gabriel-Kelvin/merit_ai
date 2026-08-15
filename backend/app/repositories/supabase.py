@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 from supabase import Client, create_client
 
 from app.assessment.models import (
+    AssessmentBlueprint,
+    AssessmentMemory,
     AssessmentResult,
     AssessmentSession,
     AssessmentStatus,
@@ -40,13 +42,6 @@ class SupabaseAssessmentRepository:
                     "target_role": candidate.target_role,
                     "technical_skills": candidate.technical_skills,
                     "projects": [item.model_dump(mode="json") for item in candidate.projects],
-                    "ai_tools_used": candidate.ai_tools_used,
-                    "professional_links": {
-                        "github_url": str(candidate.github_url) if candidate.github_url else None,
-                        "linkedin_url": str(candidate.linkedin_url)
-                        if candidate.linkedin_url
-                        else None,
-                    },
                     "context_json": candidate.model_dump(mode="json"),
                 }
             )
@@ -60,7 +55,7 @@ class SupabaseAssessmentRepository:
                     "public_id": str(session.id),
                     "candidate_id": candidate_row["id"],
                     "status": session.status.value,
-                    "current_dimension": session.current_question.dimension.value,
+                    "current_dimension": session.current_question.dimension,
                     "progress": session.progress,
                     "question_count": len(session.questions),
                     "max_questions": session.max_questions,
@@ -85,6 +80,12 @@ class SupabaseAssessmentRepository:
         if not rows:
             return None
         assessment = rows[0]
+        state = assessment.get("state_json") or {}
+        blueprint = (
+            AssessmentBlueprint.model_validate(state["blueprint"])
+            if state.get("blueprint")
+            else None
+        )
         candidate_row = (
             self.client.table("candidates")
             .select("context_json")
@@ -101,7 +102,7 @@ class SupabaseAssessmentRepository:
             .execute()
             .data
         )
-        questions = [self._question_from_row(row) for row in question_rows]
+        questions = [self._question_from_row(row, blueprint) for row in question_rows]
         questions_by_internal_id = {
             row["id"]: question for row, question in zip(question_rows, questions, strict=True)
         }
@@ -117,17 +118,19 @@ class SupabaseAssessmentRepository:
             EvaluationRecord(
                 question=questions_by_internal_id[row["question_id"]],
                 response_text=row["response_text"],
-                evaluation=ResponseEvaluation.model_validate(row["evaluation_json"]),
+                evaluation=self._evaluation_from_row(row["evaluation_json"]),
+                submission_reason=row.get("submission_reason", "manual"),
+                time_spent_seconds=row.get("time_spent_seconds"),
             )
             for row in response_rows
         ]
-        state = assessment.get("state_json") or {}
         current_id = state.get("current_question_id")
         current = next((question for question in questions if str(question.id) == current_id), None)
         result = self._load_result(assessment["id"], assessment_id)
         return AssessmentSession(
             id=assessment_id,
             candidate=CandidateContext.model_validate(candidate_row["context_json"]),
+            blueprint=blueprint,
             status=AssessmentStatus(assessment["status"]),
             current_question=current,
             records=records,
@@ -135,6 +138,7 @@ class SupabaseAssessmentRepository:
             followups_used=state.get("followups_used", {}),
             max_questions=assessment["max_questions"],
             result=result,
+            memory=AssessmentMemory.model_validate(state.get("memory", {})),
         )
 
     def add_question(self, assessment_id: UUID, question: Question) -> None:
@@ -162,6 +166,8 @@ class SupabaseAssessmentRepository:
                 "score": evaluation.score,
                 "confidence": evaluation.confidence,
                 "evidence_json": [item.model_dump(mode="json") for item in evaluation.evidence],
+                "submission_reason": record.submission_reason.value,
+                "time_spent_seconds": record.time_spent_seconds,
             }
         ).execute()
 
@@ -170,9 +176,9 @@ class SupabaseAssessmentRepository:
         payload = {
             "status": session.status.value,
             "current_dimension": (
-                session.current_question.dimension.value
+                session.current_question.dimension
                 if session.current_question
-                else "communication"
+                else "completed"
             ),
             "progress": session.progress,
             "question_count": len(session.questions),
@@ -205,7 +211,7 @@ class SupabaseAssessmentRepository:
                 "public_id": str(question.id),
                 "assessment_id": assessment_id,
                 "sequence_no": question.sequence_no,
-                "dimension": question.dimension.value,
+                "dimension": question.dimension,
                 "question_type": question.type.value,
                 "difficulty": question.difficulty.value,
                 "prompt": question.prompt,
@@ -217,15 +223,34 @@ class SupabaseAssessmentRepository:
                     str(question.parent_question_id) if question.parent_question_id else None
                 ),
                 "adaptation_reason": question.adaptation_reason,
+                "assessment_area": question.assessment_area.value,
+                "time_limit_seconds": question.time_limit_seconds,
+                "issued_at": question.issued_at.isoformat() if question.issued_at else None,
+                "expires_at": question.expires_at.isoformat() if question.expires_at else None,
             }
         ).execute()
 
     @staticmethod
-    def _question_from_row(row: dict) -> Question:
+    def _question_from_row(
+        row: dict, blueprint: AssessmentBlueprint | None = None
+    ) -> Question:
+        capability = next(
+            (
+                item
+                for item in (blueprint.dimensions if blueprint else [])
+                if item.id == row["dimension"]
+            ),
+            None,
+        )
         return Question(
             id=row["public_id"],
             sequence_no=row["sequence_no"],
             dimension=row["dimension"],
+            dimension_label=(
+                capability.label
+                if capability
+                else row["dimension"].replace("_", " ").title()
+            ),
             type=row["question_type"],
             difficulty=row["difficulty"],
             prompt=row["prompt"],
@@ -235,15 +260,32 @@ class SupabaseAssessmentRepository:
             is_follow_up=row.get("is_follow_up", False),
             parent_question_id=row.get("parent_question_public_id"),
             adaptation_reason=row.get("adaptation_reason") or "Initial capability probe",
+            assessment_area=row.get("assessment_area") or "role_capability",
+            time_limit_seconds=row.get("time_limit_seconds") or 180,
+            issued_at=row.get("issued_at"),
+            expires_at=row.get("expires_at"),
         )
+
+    @staticmethod
+    def _evaluation_from_row(payload: dict) -> ResponseEvaluation:
+        """Load historical AI output safely when older rows exceed current limits."""
+        normalized = dict(payload)
+        focus = normalized.get("follow_up_focus")
+        if isinstance(focus, str):
+            normalized["follow_up_focus"] = focus[:120]
+        return ResponseEvaluation.model_validate(normalized)
 
     @staticmethod
     def _state_json(session: AssessmentSession) -> dict:
         return {
             "followups_used": session.followups_used,
+            "blueprint": (
+                session.blueprint.model_dump(mode="json") if session.blueprint else None
+            ),
             "current_question_id": (
                 str(session.current_question.id) if session.current_question else None
             ),
+            "memory": session.memory.model_dump(mode="json"),
         }
 
     def _save_result(self, assessment_id: int, result: AssessmentResult) -> None:
@@ -251,7 +293,7 @@ class SupabaseAssessmentRepository:
             [
                 {
                     "assessment_id": assessment_id,
-                    "dimension": item.dimension.value,
+                    "dimension": item.dimension,
                     "score": item.score,
                     "confidence": item.confidence,
                     "evidence_count": item.evidence_count,
@@ -312,7 +354,15 @@ class SupabaseAssessmentRepository:
             assessment_id=public_id,
             readiness_score=row["overall_score"],
             classification=row["classification"],
-            dimensions=[DimensionScore.model_validate(item) for item in dimensions],
+            dimensions=[
+                DimensionScore.model_validate(
+                    {
+                        **item,
+                        "label": item["dimension"].replace("_", " ").title(),
+                    }
+                )
+                for item in dimensions
+            ],
             strengths=row["strengths"],
             gaps=row["gaps"],
             evidence_summary=row["evidence_summary"],

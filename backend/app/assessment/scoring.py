@@ -5,7 +5,7 @@ from collections import defaultdict
 from app.assessment.models import (
     AssessmentResult,
     AssessmentSession,
-    Dimension,
+    CapabilityDimension,
     DimensionProgress,
     DimensionScore,
     EvaluationTraceItem,
@@ -13,7 +13,6 @@ from app.assessment.models import (
     Recommendation,
     SignalStatus,
 )
-from app.assessment.rubric import DIMENSION_ORDER, RUBRICS
 
 STRENGTH_VALUES = {"strong": 1.0, "moderate": 0.7, "weak": 0.25, "missing": 0.0}
 
@@ -24,8 +23,8 @@ def build_dimension_progress(session: AssessmentSession) -> list[DimensionProgre
         by_dimension[record.question.dimension].append(record.evaluation)
 
     progress: list[DimensionProgress] = []
-    for dimension in DIMENSION_ORDER:
-        evaluations = by_dimension[dimension]
+    for dimension in _capabilities(session):
+        evaluations = by_dimension[dimension.id]
         confidence = (
             sum(item.confidence for item in evaluations) / len(evaluations) if evaluations else 0
         )
@@ -36,7 +35,8 @@ def build_dimension_progress(session: AssessmentSession) -> list[DimensionProgre
         )
         progress.append(
             DimensionProgress(
-                dimension=dimension,
+                dimension=dimension.id,
+                label=dimension.label,
                 questions_answered=len(evaluations),
                 credible_evidence_count=credible,
                 confidence=round(confidence, 3),
@@ -51,12 +51,14 @@ def build_result(session: AssessmentSession, model_name: str) -> AssessmentResul
     for record in session.records:
         by_dimension[record.question.dimension].append(record.evaluation)
 
+    capabilities = _capabilities(session)
     dimension_scores = [
-        _score_dimension(dimension, by_dimension[dimension]) for dimension in DIMENSION_ORDER
+        _score_dimension(dimension, by_dimension[dimension.id]) for dimension in capabilities
     ]
-    overall = round(sum(item.score * RUBRICS[item.dimension].weight for item in dimension_scores))
+    weights = {item.id: item.weight for item in capabilities}
+    overall = round(sum(item.score * weights[item.dimension] for item in dimension_scores))
     overall_confidence = round(
-        sum(item.confidence * RUBRICS[item.dimension].weight for item in dimension_scores), 3
+        sum(item.confidence * weights[item.dimension] for item in dimension_scores), 3
     )
     classification = classify(overall, dimension_scores, overall_confidence)
     strengths = _dedupe(value for item in dimension_scores for value in item.strengths)[:5]
@@ -76,6 +78,7 @@ def build_result(session: AssessmentSession, model_name: str) -> AssessmentResul
             question_id=record.question.id,
             sequence_no=record.question.sequence_no,
             dimension=record.question.dimension,
+            dimension_label=record.question.dimension_label,
             difficulty=record.question.difficulty,
             question=record.question.prompt,
             score=record.evaluation.score,
@@ -102,8 +105,8 @@ def build_result(session: AssessmentSession, model_name: str) -> AssessmentResul
     else:
         summary = (
             f"{session.candidate.name}'s strongest demonstrated capability is "
-            f"{_label(strongest.dimension)} ({strongest.score}/100). The most limiting capability "
-            f"is {_label(weakest.dimension)} ({weakest.score}/100). This conclusion is grounded in "
+            f"{strongest.label} ({strongest.score}/100). The most limiting capability "
+            f"is {weakest.label} ({weakest.score}/100). This conclusion is grounded in "
             f"{len(evidence)} evidence signals with "
             f"{_confidence_label(overall_confidence).lower()} "
             "overall confidence."
@@ -125,10 +128,11 @@ def build_result(session: AssessmentSession, model_name: str) -> AssessmentResul
     )
 
 
-def _score_dimension(dimension: Dimension, evaluations) -> DimensionScore:
+def _score_dimension(dimension: CapabilityDimension, evaluations) -> DimensionScore:
     if not evaluations:
         return DimensionScore(
-            dimension=dimension,
+            dimension=dimension.id,
+            label=dimension.label,
             score=0,
             confidence=0,
             evidence_count=0,
@@ -158,7 +162,7 @@ def _score_dimension(dimension: Dimension, evaluations) -> DimensionScore:
         for signal in evaluation.signal_assessments
         if signal.status in {SignalStatus.DEMONSTRATED, SignalStatus.PARTIAL}
     }
-    expected_signal_count = len(RUBRICS[dimension].strong_signals)
+    expected_signal_count = len(dimension.strong_signals)
     coverage = min(1.0, len(demonstrated_signals) / max(expected_signal_count, 1))
     reliability = min(0.95, 0.55 + 0.25 * confidence + 0.2 * coverage)
     score = round(50 + (raw_score - 50) * reliability)
@@ -176,7 +180,8 @@ def _score_dimension(dimension: Dimension, evaluations) -> DimensionScore:
         f"{_confidence_label(confidence).lower()}."
     )
     return DimensionScore(
-        dimension=dimension,
+        dimension=dimension.id,
+        label=dimension.label,
         score=max(0, min(100, score)),
         confidence=round(confidence, 3),
         evidence_count=len(credible_items),
@@ -216,12 +221,12 @@ def build_recommendation(
     gaps: list[str],
 ) -> Recommendation:
     weakest = sorted(dimensions, key=lambda item: (item.score, item.confidence))[:2]
-    priorities = [_label(item.dimension) for item in weakest]
+    priorities = [item.label for item in weakest]
     titles = {
         ReadinessClassification.READY: "Ready with focused growth priorities",
         ReadinessClassification.TARGETED_DEVELOPMENT: "Targeted capability development",
-        ReadinessClassification.STRUCTURED_DEVELOPMENT: "Structured AI engineering development",
-        ReadinessClassification.FOUNDATION_DEVELOPMENT: "Strengthen engineering foundations",
+        ReadinessClassification.STRUCTURED_DEVELOPMENT: "Structured professional development",
+        ReadinessClassification.FOUNDATION_DEVELOPMENT: "Strengthen role foundations",
     }
     limiting_gap = gaps[0] if gaps else "More specific, verifiable evidence is needed."
     actions = [
@@ -253,9 +258,23 @@ def _confidence_label(confidence: float) -> str:
     return "Low"
 
 
-def _label(dimension: Dimension) -> str:
-    return dimension.value.replace("_", " ").title()
-
-
 def _dedupe(values) -> list[str]:
     return list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
+
+
+def _capabilities(session: AssessmentSession) -> list[CapabilityDimension]:
+    if session.blueprint:
+        return session.blueprint.dimensions
+    ids = list(dict.fromkeys(question.dimension for question in session.questions))
+    weight = 1 / max(len(ids), 1)
+    return [
+        CapabilityDimension(
+            id=dimension_id,
+            label=dimension_id.replace("_", " ").title(),
+            purpose="Assess evidence for this legacy capability area.",
+            strong_signals=["specific knowledge", "applied example", "verification"],
+            weak_signals=["vague claims"],
+            weight=weight,
+        )
+        for dimension_id in ids
+    ]

@@ -1,27 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
-
-
-class Dimension(StrEnum):
-    ENGINEERING_FUNDAMENTALS = "engineering_fundamentals"
-    PROBLEM_SOLVING = "problem_solving"
-    AI_FLUENCY = "ai_fluency"
-    AGENTIC_ENGINEERING = "agentic_engineering"
-    COMMUNICATION = "communication"
-
-
-DIMENSION_LABELS: dict[Dimension, str] = {
-    Dimension.ENGINEERING_FUNDAMENTALS: "Engineering Fundamentals",
-    Dimension.PROBLEM_SOLVING: "Problem Solving",
-    Dimension.AI_FLUENCY: "AI Fluency",
-    Dimension.AGENTIC_ENGINEERING: "Agentic Engineering",
-    Dimension.COMMUNICATION: "Communication",
-}
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class QuestionType(StrEnum):
@@ -51,6 +35,26 @@ class AdaptiveAction(StrEnum):
     ADVANCE = "advance"
     COMPLETE = "complete"
     REPLAY = "replay"
+    CHANGE_TOPIC = "change_topic"
+
+
+class AssessmentArea(StrEnum):
+    INTRODUCTION = "introduction"
+    EXPERIENCE = "experience"
+    PROJECT = "project"
+    ROLE_CAPABILITY = "role_capability"
+    PROFESSIONAL_JUDGMENT = "professional_judgment"
+
+
+class CandidateIntent(StrEnum):
+    ANSWER = "answer"
+    UNKNOWN = "unknown"
+    CHANGE_TOPIC = "change_topic"
+
+
+class SubmissionReason(StrEnum):
+    MANUAL = "manual"
+    TIME_EXPIRED = "time_expired"
 
 
 class AssessmentStatus(StrEnum):
@@ -72,6 +76,82 @@ class ProjectExperience(BaseModel):
     technologies: list[str] = Field(default_factory=list, max_length=20)
 
 
+class ResumeWorkContext(BaseModel):
+    title: str | None = Field(default=None, max_length=160)
+    company: str | None = Field(default=None, max_length=160)
+    start_date: str | None = Field(default=None, max_length=40)
+    end_date: str | None = Field(default=None, max_length=40)
+    description: str | None = Field(default=None, max_length=1200)
+    achievements: list[str] = Field(default_factory=list, max_length=8)
+    technologies: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ResumeContext(BaseModel):
+    professional_summary: str | None = Field(default=None, max_length=1200)
+    work_experience: list[ResumeWorkContext] = Field(default_factory=list, max_length=8)
+    achievements: list[str] = Field(default_factory=list, max_length=12)
+    certifications: list[str] = Field(default_factory=list, max_length=12)
+    additional_context: list[str] = Field(default_factory=list, max_length=12)
+    source_filename: str | None = Field(default=None, max_length=255)
+    source_text: str | None = Field(
+        default=None,
+        max_length=12_000,
+        description="Readable resume context supplied to the assessment engine.",
+    )
+
+
+class CapabilityDimension(BaseModel):
+    id: str = Field(
+        min_length=2,
+        max_length=60,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description="Stable role-specific capability identifier generated for this assessment.",
+    )
+    label: str = Field(min_length=2, max_length=100)
+    purpose: str = Field(min_length=10, max_length=500)
+    strong_signals: list[str] = Field(min_length=3, max_length=8)
+    weak_signals: list[str] = Field(default_factory=list, max_length=6)
+    weight: float = Field(ge=0.1, le=0.5)
+
+
+class AssessmentBlueprint(BaseModel):
+    role_family: str = Field(min_length=2, max_length=120)
+    rationale: str = Field(min_length=10, max_length=800)
+    dimensions: list[CapabilityDimension] = Field(min_length=3, max_length=6)
+
+    @field_validator("dimensions")
+    @classmethod
+    def normalize_dimensions(
+        cls, dimensions: list[CapabilityDimension]
+    ) -> list[CapabilityDimension]:
+        if len({item.id for item in dimensions}) != len(dimensions):
+            raise ValueError("Capability dimension ids must be unique")
+        total = sum(item.weight for item in dimensions)
+        if not 0.95 <= total <= 1.05:
+            raise ValueError("Capability dimension weights must total approximately 1.0")
+        return [item.model_copy(update={"weight": item.weight / total}) for item in dimensions]
+
+
+class GeneratedQuestion(BaseModel):
+    type: QuestionType
+    difficulty: Difficulty
+    prompt: str = Field(min_length=20, max_length=1600)
+    intent: str = Field(min_length=10, max_length=500)
+    expected_signals: list[str] = Field(min_length=2, max_length=8)
+    personalization_context: str | None = Field(default=None, max_length=1000)
+    time_limit_seconds: int = Field(
+        default=180,
+        ge=120,
+        le=300,
+        description="AI-selected answer window: 2, 3, or 5 minutes.",
+    )
+
+    @field_validator("time_limit_seconds")
+    @classmethod
+    def normalize_time_limit(cls, value: int) -> int:
+        return min((120, 180, 300), key=lambda allowed: abs(allowed - value))
+
+
 class CandidateContext(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
@@ -90,7 +170,6 @@ class CandidateContext(BaseModel):
                         "technologies": ["React", "FastAPI", "PostgreSQL"],
                     }
                 ],
-                "ai_tools_used": ["Gemini", "Codex"],
             }
         }
     )
@@ -102,11 +181,15 @@ class CandidateContext(BaseModel):
     target_role: str = Field(min_length=2, max_length=120)
     technical_skills: list[str] = Field(default_factory=list, max_length=30)
     projects: list[ProjectExperience] = Field(default_factory=list, max_length=10)
-    ai_tools_used: list[str] = Field(default_factory=list, max_length=20)
-    github_url: HttpUrl | None = None
-    linkedin_url: HttpUrl | None = None
+    resume_context: ResumeContext | None = Field(
+        default=None,
+        description=(
+            "Structured evidence retained from the uploaded resume for question personalization; "
+            "the raw resume file is not stored."
+        ),
+    )
 
-    @field_validator("technical_skills", "ai_tools_used")
+    @field_validator("technical_skills")
     @classmethod
     def normalize_list(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(value.strip() for value in values if value.strip()))
@@ -115,7 +198,8 @@ class CandidateContext(BaseModel):
 class Question(BaseModel):
     id: UUID
     sequence_no: int = Field(ge=1)
-    dimension: Dimension
+    dimension: str = Field(min_length=2, max_length=60, pattern=r"^[a-z][a-z0-9_]*$")
+    dimension_label: str = Field(min_length=2, max_length=100)
     type: QuestionType
     difficulty: Difficulty
     prompt: str
@@ -125,6 +209,10 @@ class Question(BaseModel):
     is_follow_up: bool = False
     parent_question_id: UUID | None = None
     adaptation_reason: str = "Initial capability probe"
+    assessment_area: AssessmentArea = AssessmentArea.ROLE_CAPABILITY
+    time_limit_seconds: Literal[120, 180, 300] = 180
+    issued_at: datetime | None = None
+    expires_at: datetime | None = None
 
 
 class EvidenceItem(BaseModel):
@@ -161,6 +249,8 @@ class ResponseEvaluation(BaseModel):
     reasoning_summary: str = Field(
         description="A concise assessor explanation without hidden chain-of-thought."
     )
+    candidate_intent: CandidateIntent = CandidateIntent.ANSWER
+    requested_topic: str | None = Field(default=None, max_length=120)
 
 
 class AdaptiveDecision(BaseModel):
@@ -171,7 +261,8 @@ class AdaptiveDecision(BaseModel):
 
 
 class DimensionProgress(BaseModel):
-    dimension: Dimension
+    dimension: str
+    label: str
     questions_answered: int = Field(ge=0)
     credible_evidence_count: int = Field(ge=0)
     confidence: float = Field(ge=0, le=1)
@@ -179,7 +270,8 @@ class DimensionProgress(BaseModel):
 
 
 class DimensionScore(BaseModel):
-    dimension: Dimension
+    dimension: str
+    label: str
     score: int = Field(ge=0, le=100)
     confidence: float = Field(ge=0, le=1)
     evidence_count: int = Field(ge=0)
@@ -194,7 +286,8 @@ class DimensionScore(BaseModel):
 class EvaluationTraceItem(BaseModel):
     question_id: UUID
     sequence_no: int
-    dimension: Dimension
+    dimension: str
+    dimension_label: str
     difficulty: Difficulty
     question: str
     score: int = Field(ge=0, le=100)
@@ -243,17 +336,31 @@ class EvaluationRecord(BaseModel):
     question: Question
     response_text: str
     evaluation: ResponseEvaluation
+    submission_reason: SubmissionReason = SubmissionReason.MANUAL
+    time_spent_seconds: int | None = Field(default=None, ge=0, le=1800)
+
+
+class AssessmentMemory(BaseModel):
+    graph_version: str = "langgraph-v1"
+    area_counts: dict[str, int] = Field(default_factory=dict)
+    coverage_targets: dict[str, int] = Field(default_factory=dict)
+    avoided_topics: list[str] = Field(default_factory=list, max_length=20)
+    evidence_gaps: list[str] = Field(default_factory=list, max_length=30)
+    conversation_summary: str = Field(default="", max_length=6000)
+    last_transition: str = "start"
 
 
 class AssessmentSession(BaseModel):
     id: UUID
     candidate: CandidateContext
+    blueprint: AssessmentBlueprint | None = None
     status: AssessmentStatus = AssessmentStatus.IN_PROGRESS
     current_question: Question | None = None
     records: list[EvaluationRecord] = Field(default_factory=list)
     questions: list[Question] = Field(default_factory=list)
     followups_used: dict[str, int] = Field(default_factory=dict)
-    max_questions: int = Field(default=7, ge=3, le=12)
+    max_questions: int = Field(default=20, ge=3, le=20)
+    memory: AssessmentMemory = Field(default_factory=AssessmentMemory)
     result: AssessmentResult | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -291,7 +398,9 @@ class SubmitResponseRequest(BaseModel):
         }
     )
     question_id: UUID
-    content: str = Field(min_length=3, max_length=8000)
+    content: str = Field(default="", max_length=8000)
+    submission_reason: SubmissionReason = SubmissionReason.MANUAL
+    time_spent_seconds: int | None = Field(default=None, ge=0, le=1800)
 
 
 class SubmitResponseResponse(BaseModel):
@@ -314,6 +423,7 @@ class AssessmentStateResponse(BaseModel):
     questions_answered: int
     max_questions: int
     dimension_progress: list[DimensionProgress] = Field(default_factory=list)
+    memory: AssessmentMemory
     result: AssessmentResult | None = None
 
 
@@ -322,7 +432,7 @@ class ErrorResponse(BaseModel):
 
 
 class MethodologyDimension(BaseModel):
-    dimension: Dimension
+    dimension: str
     label: str
     purpose: str
     weight: float

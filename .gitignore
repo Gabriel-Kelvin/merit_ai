@@ -1,11 +1,51 @@
+# Environment & Secret files
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+*.cer
+
+# Python virtual environment & caches
 .venv/
+venv/
+env/
+ENV/
 __pycache__/
+*.py[cod]
+*$py.class
 .pytest_cache/
 .ruff_cache/
-*.py[cod]
-*.sqlite3
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node.js & Frontend build outputs
 node_modules/
 dist/
+dist-ssr/
+*.local
+coverage/
+
+# Database files
+*.sqlite
+*.sqlite3
+*.db
+
+# Temporary & Log files
+tmp/
+temp/
+scratch/
+*.log
+logs/
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+

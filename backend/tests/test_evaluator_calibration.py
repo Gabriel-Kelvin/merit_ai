@@ -6,13 +6,14 @@ from app.assessment.evaluator import (
     EvaluationUnavailableError,
     FallbackEvaluator,
     GeminiEvaluator,
+    GroqEvaluator,
     OpenRouterEvaluator,
     _retry_after_seconds,
 )
 from app.assessment.models import (
     CandidateContext,
     Difficulty,
-    Dimension,
+    GeneratedQuestion,
     Question,
     QuestionType,
     ResponseEvaluation,
@@ -25,13 +26,27 @@ def engineering_question() -> Question:
     return Question(
         id=uuid4(),
         sequence_no=1,
-        dimension=Dimension.ENGINEERING_FUNDAMENTALS,
+        dimension="software_systems",
+        dimension_label="Software Systems",
         type=QuestionType.TEXT,
         difficulty=Difficulty.STANDARD,
         prompt="Explain the request flow.",
         intent="Collect engineering evidence.",
         expected_signals=["data flow", "validation", "failure handling", "verification"],
     )
+
+
+def test_generated_question_normalizes_model_timer_to_supported_window():
+    generated = GeneratedQuestion(
+        type="text",
+        difficulty="standard",
+        prompt="Explain how you would investigate and resolve this production failure.",
+        intent="Assess structured debugging and verification judgment.",
+        expected_signals=["investigation", "verification"],
+        time_limit_seconds=241,
+    )
+
+    assert generated.time_limit_seconds == 300
 
 
 def test_missing_signals_cap_an_overconfident_model_score():
@@ -104,6 +119,13 @@ def test_openrouter_fallback_rejects_non_free_models():
         OpenRouterEvaluator("test-key", "anthropic/claude-sonnet")
 
 
+def test_groq_accepts_a_production_model_without_openrouter_free_suffix():
+    evaluator = GroqEvaluator("test-key", "llama-3.3-70b-versatile")
+
+    assert evaluator.endpoint.startswith("https://api.groq.com/")
+    assert evaluator.model_name == "llama-3.3-70b-versatile"
+
+
 def test_fallback_uses_secondary_only_when_primary_is_unavailable():
     expected = ResponseEvaluation(
         score=72,
@@ -142,3 +164,43 @@ def test_fallback_uses_secondary_only_when_primary_is_unavailable():
 
     assert result == expected
     assert evaluator.model_name.endswith(":free")
+
+
+def test_fallback_cools_down_a_failed_primary():
+    expected = ResponseEvaluation(
+        score=72,
+        confidence=0.8,
+        evidence=[],
+        strengths=[],
+        gaps=[],
+        follow_up_required=False,
+        reasoning_summary="The fallback returned a valid evaluation.",
+    )
+
+    class Primary:
+        model_name = "failing-primary"
+        calls = 0
+
+        def evaluate(self, candidate, question, response_text):
+            del candidate, question, response_text
+            self.calls += 1
+            raise EvaluationUnavailableError(30)
+
+    class Secondary:
+        model_name = "fast-secondary"
+
+        def evaluate(self, candidate, question, response_text):
+            del candidate, question, response_text
+            return expected
+
+    primary = Primary()
+    evaluator = FallbackEvaluator(primary, Secondary(), cooldown_seconds=45)
+    candidate = CandidateContext(
+        name="Cooldown Test", experience_level="fresher", target_role="AI Engineer"
+    )
+
+    evaluator.evaluate(candidate, engineering_question(), "First answer")
+    evaluator.evaluate(candidate, engineering_question(), "Second answer")
+
+    assert primary.calls == 1
+    assert evaluator.model_name == "fast-secondary"
