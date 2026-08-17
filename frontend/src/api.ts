@@ -7,7 +7,8 @@ import type {
   SavedCandidateProfile,
 } from './types'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+  || (import.meta.env.PROD ? '/backend' : 'http://127.0.0.1:8000')
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const isFormData = options?.body instanceof FormData
@@ -28,6 +29,18 @@ export function login(username: string, password: string) {
   return request<AuthUser>('/api/v1/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
+  })
+}
+
+export function signup(name: string, email: string, password: string, confirmPassword: string) {
+  return request<AuthUser>('/api/v1/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      email,
+      password,
+      confirm_password: confirmPassword,
+    }),
   })
 }
 

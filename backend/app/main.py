@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.accounts import MemoryAccountService, SupabaseAccountService
 from app.api.auth_routes import router as auth_router
 from app.api.profile_routes import router as profile_router
 from app.api.resume_routes import router as resume_router
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 OPENAPI_TAGS = [
     {
         "name": "authentication",
-        "description": "Demo login, current session, and logout endpoints.",
+        "description": "Candidate signup, login, current session, and logout endpoints.",
     },
     {
         "name": "profile",
@@ -102,6 +103,16 @@ def build_service(settings: Settings) -> AssessmentService:
     )
 
 
+def build_account_service(settings: Settings):
+    if settings.merit_storage_mode == "supabase":
+        return SupabaseAccountService(
+            settings.supabase_url,
+            settings.supabase_publishable_key,
+            settings.supabase_secret_key,
+        )
+    return MemoryAccountService()
+
+
 def create_app(
     service: AssessmentService | None = None, settings: Settings | None = None
 ) -> FastAPI:
@@ -125,8 +136,8 @@ def create_app(
             "- Supabase stores every accepted question, answer, evaluation, and final audit "
             "trace.\n"
             "- Repeated identical submissions are replayed safely instead of evaluated twice.\n\n"
-            "The practical IDE challenge, payment, GitHub integration, and deployment concerns are "
-            "intentionally outside this API's current scope."
+            "The practical IDE challenge and payment integration are intentionally outside this "
+            "API's current scope."
         ),
         openapi_tags=OPENAPI_TAGS,
         docs_url="/docs",
@@ -157,6 +168,7 @@ def create_app(
         else None
     )
     app.state.settings = settings
+    app.state.account_service = build_account_service(settings)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=list(

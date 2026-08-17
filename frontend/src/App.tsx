@@ -7,6 +7,7 @@ import {
   login,
   logout,
   saveCandidateProfile,
+  signup,
   startAssessment,
   submitResponse,
 } from './api'
@@ -27,11 +28,12 @@ import type {
 } from './types'
 
 type View = 'profile' | 'assessment' | 'results'
-type PublicView = 'landing' | 'login'
+type PublicView = 'landing' | 'login' | 'signup'
 
 const STORAGE_KEY = 'merit:assessment:v1'
 const CANDIDATE_KEY = 'merit:candidate:v1'
 const HISTORY_KEY = 'merit:history:v1'
+const ACCOUNT_KEY = 'merit:account:v1'
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -118,6 +120,26 @@ function App() {
   const savedProfileRef = useRef(savedProfile)
   savedProfileRef.current = savedProfile
 
+  function adoptAccount(username: string) {
+    const previousAccount = localStorage.getItem(ACCOUNT_KEY)
+    const shouldResetWorkspace = previousAccount
+      ? previousAccount !== username
+      : username !== 'demo'
+    if (shouldResetWorkspace) {
+      localStorage.removeItem(STORAGE_KEY)
+      localStorage.removeItem(CANDIDATE_KEY)
+      localStorage.removeItem(HISTORY_KEY)
+      setAssessmentId(null)
+      setCandidate(null)
+      setHistory([])
+      setSavedProfile(null)
+      setQuestion(null)
+      setResult(null)
+      setShowProfileForm(true)
+    }
+    localStorage.setItem(ACCOUNT_KEY, username)
+  }
+
   const rememberResult = useCallback((completedResult: AssessmentResult, targetRole?: string) => {
     setHistory((current) => {
       if (current.some((item) => item.assessment_id === completedResult.assessment_id)) return current
@@ -142,7 +164,10 @@ function App() {
 
   useEffect(() => {
     getCurrentUser()
-      .then(() => setIsAuthenticated(true))
+      .then((user) => {
+        adoptAccount(user.username)
+        setIsAuthenticated(true)
+      })
       .catch(() => setIsAuthenticated(false))
       .finally(() => setAuthChecked(true))
   }, [])
@@ -212,12 +237,35 @@ function App() {
     setAuthLoading(true)
     setAuthError(null)
     try {
-      await login(username, password)
+      const user = await login(username, password)
+      adoptAccount(user.username)
       setView('profile')
       setProfileChecked(false)
       setIsAuthenticated(true)
     } catch (requestError) {
       setAuthError(requestError instanceof Error ? requestError.message : 'Unable to sign in.')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  async function handleSignup(
+    name: string,
+    email: string,
+    password: string,
+    confirmPassword: string,
+  ) {
+    setAuthLoading(true)
+    setAuthError(null)
+    try {
+      const user = await signup(name, email, password, confirmPassword)
+      adoptAccount(user.username)
+      setView('profile')
+      setProfileChecked(false)
+      setResumeChecked(false)
+      setIsAuthenticated(true)
+    } catch (requestError) {
+      setAuthError(requestError instanceof Error ? requestError.message : 'Unable to create account.')
     } finally {
       setAuthLoading(false)
     }
@@ -357,10 +405,12 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    if (publicView === 'login') {
+    if (publicView === 'login' || publicView === 'signup') {
       return (
         <LoginScreen
           onLogin={handleLogin}
+          onSignup={handleSignup}
+          initialMode={publicView}
           onBack={() => {
             setAuthError(null)
             setPublicView('landing')
@@ -376,9 +426,12 @@ function App() {
           <button className="wordmark" type="button" aria-label="Merit AI home">
             <span className="wordmark-mark">M</span><span>Merit AI</span>
           </button>
-          <button className="public-login-button" type="button" onClick={() => setPublicView('login')}>Log in</button>
+          <div className="public-auth-actions">
+            <button className="public-login-button" type="button" onClick={() => setPublicView('login')}>Log in</button>
+            <button className="primary-button public-signup-button" type="button" onClick={() => setPublicView('signup')}>Create account</button>
+          </div>
         </header>
-        <main><LandingPage onStart={() => setPublicView('login')} /></main>
+        <main><LandingPage onStart={() => setPublicView('signup')} /></main>
       </div>
     )
   }

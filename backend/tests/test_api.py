@@ -58,6 +58,90 @@ def test_demo_login_logout_and_protected_routes():
     assert client.get("/api/v1/auth/me").status_code == 401
 
 
+def test_signup_creates_a_session_and_accounts_are_isolated():
+    service = AssessmentService(
+        MemoryAssessmentRepository(), DeterministicEvaluator(), max_questions=5
+    )
+    settings = Settings(merit_storage_mode="memory", gemini_api_key="", _env_file=None)
+    client = TestClient(create_app(service=service, settings=settings))
+
+    first = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "name": "Maya Singh",
+            "email": "maya@example.com",
+            "password": "SecurePass123!",
+            "confirm_password": "SecurePass123!",
+        },
+    )
+    assert first.status_code == 201
+    assert first.json()["email"] == "maya@example.com"
+    assert client.get("/api/v1/auth/me").json()["username"] == "maya@example.com"
+
+    started = client.post(
+        "/api/v1/assessments",
+        json={
+            "candidate": {
+                "name": "Maya Singh",
+                "experience_level": "fresher",
+                "target_role": "Mechanical Engineer",
+            }
+        },
+    )
+    assert started.status_code == 201
+    assessment_id = started.json()["assessment_id"]
+    client.post("/api/v1/auth/logout")
+
+    second = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "name": "Arun Rao",
+            "email": "arun@example.com",
+            "password": "AnotherPass123!",
+            "confirm_password": "AnotherPass123!",
+        },
+    )
+    assert second.status_code == 201
+    assert client.get(f"/api/v1/assessments/{assessment_id}").status_code == 404
+
+    client.post("/api/v1/auth/logout")
+    logged_back_in = client.post(
+        "/api/v1/auth/login",
+        json={"username": "maya@example.com", "password": "SecurePass123!"},
+    )
+    assert logged_back_in.status_code == 200
+    assert client.get(f"/api/v1/assessments/{assessment_id}").status_code == 200
+
+
+def test_signup_validation_and_duplicate_account_errors():
+    service = AssessmentService(
+        MemoryAssessmentRepository(), DeterministicEvaluator(), max_questions=5
+    )
+    settings = Settings(merit_storage_mode="memory", gemini_api_key="", _env_file=None)
+    client = TestClient(create_app(service=service, settings=settings))
+
+    mismatched = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "name": "Maya Singh",
+            "email": "maya@example.com",
+            "password": "SecurePass123!",
+            "confirm_password": "different-password",
+        },
+    )
+    assert mismatched.status_code == 422
+
+    payload = {
+        "name": "Maya Singh",
+        "email": "maya@example.com",
+        "password": "SecurePass123!",
+        "confirm_password": "SecurePass123!",
+    }
+    assert client.post("/api/v1/auth/signup", json=payload).status_code == 201
+    client.post("/api/v1/auth/logout")
+    assert client.post("/api/v1/auth/signup", json=payload).status_code == 409
+
+
 def test_candidate_profile_persists_for_the_logged_in_account():
     client = make_client()
     assert client.get("/api/v1/profile").status_code == 404

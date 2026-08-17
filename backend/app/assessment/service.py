@@ -27,6 +27,10 @@ class AssessmentNotFoundError(LookupError):
     pass
 
 
+class AssessmentForbiddenError(PermissionError):
+    pass
+
+
 class AssessmentCompletedError(RuntimeError):
     pass
 
@@ -54,9 +58,10 @@ class AssessmentService:
         self.max_questions = max_questions
         self._submission_lock = RLock()
 
-    def start(self, candidate) -> StartAssessmentResponse:
+    def start(self, candidate, account_id: str | None = None) -> StartAssessmentResponse:
         session = AssessmentSession(
             id=uuid4(),
+            account_id=account_id,
             candidate=candidate,
             max_questions=self.max_questions,
         )
@@ -79,6 +84,7 @@ class AssessmentService:
         content: str,
         submission_reason: SubmissionReason = SubmissionReason.MANUAL,
         time_spent_seconds: int | None = None,
+        account_id: str | None = None,
     ) -> SubmitResponseResponse:
         with self._submission_lock:
             return self._submit_locked(
@@ -87,6 +93,7 @@ class AssessmentService:
                 content,
                 submission_reason,
                 time_spent_seconds,
+                account_id,
             )
 
     def _submit_locked(
@@ -96,8 +103,9 @@ class AssessmentService:
         content: str,
         submission_reason: SubmissionReason,
         time_spent_seconds: int | None,
+        account_id: str | None,
     ) -> SubmitResponseResponse:
-        session = self._get_or_raise(assessment_id)
+        session = self._get_or_raise(assessment_id, account_id)
         existing = next(
             (record for record in session.records if record.question.id == question_id), None
         )
@@ -158,8 +166,10 @@ class AssessmentService:
             result=session.result,
         )
 
-    def get_state(self, assessment_id: UUID) -> AssessmentStateResponse:
-        session = self._get_or_raise(assessment_id)
+    def get_state(
+        self, assessment_id: UUID, account_id: str | None = None
+    ) -> AssessmentStateResponse:
+        session = self._get_or_raise(assessment_id, account_id)
         return AssessmentStateResponse(
             assessment_id=session.id,
             status=session.status,
@@ -173,16 +183,24 @@ class AssessmentService:
             result=session.result,
         )
 
-    def get_result(self, assessment_id: UUID) -> AssessmentResult:
-        session = self._get_or_raise(assessment_id)
+    def get_result(
+        self, assessment_id: UUID, account_id: str | None = None
+    ) -> AssessmentResult:
+        session = self._get_or_raise(assessment_id, account_id)
         if session.status != AssessmentStatus.COMPLETED or not session.result:
             raise AssessmentCompletedError("Assessment is not complete yet")
         return session.result
 
-    def _get_or_raise(self, assessment_id: UUID) -> AssessmentSession:
+    def _get_or_raise(
+        self, assessment_id: UUID, account_id: str | None = None
+    ) -> AssessmentSession:
         session = self.repository.get(assessment_id)
         if not session:
             raise AssessmentNotFoundError(f"Assessment {assessment_id} was not found")
+        if account_id is not None:
+            is_legacy_demo = session.account_id is None and account_id == "demo"
+            if not is_legacy_demo and session.account_id != account_id:
+                raise AssessmentForbiddenError("Assessment does not belong to this account")
         return session
 
 

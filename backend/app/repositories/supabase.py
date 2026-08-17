@@ -53,6 +53,7 @@ class SupabaseAssessmentRepository:
             .insert(
                 {
                     "public_id": str(session.id),
+                    "account_id": session.account_id,
                     "candidate_id": candidate_row["id"],
                     "status": session.status.value,
                     "current_dimension": session.current_question.dimension,
@@ -129,6 +130,7 @@ class SupabaseAssessmentRepository:
         result = self._load_result(assessment["id"], assessment_id)
         return AssessmentSession(
             id=assessment_id,
+            account_id=assessment.get("account_id"),
             candidate=CandidateContext.model_validate(candidate_row["context_json"]),
             blueprint=blueprint,
             status=AssessmentStatus(assessment["status"]),

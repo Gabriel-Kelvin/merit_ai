@@ -352,6 +352,7 @@ class AssessmentMemory(BaseModel):
 
 class AssessmentSession(BaseModel):
     id: UUID
+    account_id: str | None = None
     candidate: CandidateContext
     blueprint: AssessmentBlueprint | None = None
     status: AssessmentStatus = AssessmentStatus.IN_PROGRESS

@@ -30,7 +30,9 @@ The FastAPI backend supports:
 The React candidate application includes:
 
 - a premium, focused landing experience;
-- demo username/password authentication with a signed, HttpOnly session cookie and logout;
+- candidate signup and email/password login through Supabase Auth, with immediate access and no
+  email-verification step;
+- signed, HttpOnly application sessions, logout, and account-isolated profiles and assessments;
 - PDF, DOCX, and TXT resume parsing with selective profile autofill;
 - structured work history, achievements, certifications, projects, and readable resume context
   retained for question personalization while the raw upload is discarded;
@@ -68,7 +70,8 @@ and controls safe coverage, calibrated scoring, stopping, persistence, and recom
 
 ## API
 
-- `POST /api/v1/auth/login` - create the demo session
+- `POST /api/v1/auth/signup` - create a candidate account and session
+- `POST /api/v1/auth/login` - sign in with email/password or the local demo account
 - `GET /api/v1/auth/me` - inspect the current session
 - `POST /api/v1/auth/logout` - clear the session
 - `POST /api/v1/assessments` - start an assessment and receive a personalised question
@@ -104,13 +107,21 @@ npm run dev
 
 Open `http://127.0.0.1:5173` for the candidate experience.
 
-The default local demo credentials are `demo` / `MeritDemo@2026`. Change the demo password and
-session secret in `.env` before sharing the app beyond a controlled demonstration.
+The default local demo credentials are `demo` / `MeritDemo@2026`. New candidates can instead
+create their own account. Change the demo password and session secret in `.env` before sharing a
+separate environment.
+
+## Production
+
+- Candidate app: `https://merit-ai-chi.vercel.app`
+- API: `https://merit-ai-api.onrender.com`
+- Swagger: `https://merit-ai-api.onrender.com/docs`
 
 ## Security and scope
 
 `SUPABASE_SECRET_KEY` is backend-only and must never use a `VITE_` prefix or be placed in the frontend. `.env` is intentionally ignored by Git. Browser roles cannot directly access assessment tables; business operations flow through FastAPI.
 
-The practical IDE challenge, payment, GitHub integration, and deployment are intentionally out of scope while the assessment backend is being perfected. Assessments currently accept text responses; voice transcription remains optional.
+The practical IDE challenge and payment integration are intentionally outside the current scope.
+Assessments currently accept text responses; voice transcription remains optional.
 
 The copy/paste controls are assessment-integrity deterrents, not an absolute browser security boundary. Screenshots, developer tools, and external devices cannot be reliably blocked by a web application.

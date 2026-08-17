@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.auth import require_demo_user
+from app.auth import require_user
 from app.profiles import CandidateProfileDraft, SavedCandidateProfile
 
 router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
 @router.get("", response_model=SavedCandidateProfile, summary="Read the saved candidate profile")
 def get_profile(
     request: Request,
-    account_id: Annotated[str, Depends(require_demo_user)],
+    account_id: Annotated[str, Depends(require_user)],
 ) -> SavedCandidateProfile:
     profile = request.app.state.profile_store.get(account_id)
     if profile is None:
@@ -28,7 +28,7 @@ def get_profile(
 def save_profile(
     draft: CandidateProfileDraft,
     request: Request,
-    account_id: Annotated[str, Depends(require_demo_user)],
+    account_id: Annotated[str, Depends(require_user)],
 ) -> SavedCandidateProfile:
     existing = request.app.state.profile_store.get(account_id)
     preserved = {}

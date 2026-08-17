@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.assessment.models import ErrorResponse
-from app.auth import require_demo_user
+from app.auth import require_user
 from app.resumes.models import ResumeParseResponse
 from app.resumes.parser import (
     MAX_RESUME_BYTES,
@@ -16,7 +16,7 @@ from app.resumes.parser import (
 router = APIRouter(
     prefix="/api/v1/resumes",
     tags=["resume"],
-    dependencies=[Depends(require_demo_user)],
+    dependencies=[Depends(require_user)],
 )
 
 

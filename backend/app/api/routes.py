@@ -16,14 +16,15 @@ from app.assessment.models import (
 )
 from app.assessment.service import (
     AssessmentCompletedError,
+    AssessmentForbiddenError,
     AssessmentNotFoundError,
     AssessmentService,
     DuplicateResponseError,
     QuestionMismatchError,
 )
-from app.auth import require_demo_user
+from app.auth import require_user
 
-router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_demo_user)])
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_user)])
 
 
 def get_service(request: Request) -> AssessmentService:
@@ -31,6 +32,7 @@ def get_service(request: Request) -> AssessmentService:
 
 
 ServiceDependency = Annotated[AssessmentService, Depends(get_service)]
+AccountDependency = Annotated[str, Depends(require_user)]
 
 
 @router.get(
@@ -92,9 +94,10 @@ def get_methodology() -> AssessmentMethodologyResponse:
 def start_assessment(
     payload: StartAssessmentRequest,
     service: ServiceDependency,
+    account_id: AccountDependency,
 ) -> StartAssessmentResponse:
     try:
-        return service.start(payload.candidate)
+        return service.start(payload.candidate, account_id=account_id)
     except EvaluationUnavailableError as exc:
         raise HTTPException(
             status_code=503,
@@ -130,6 +133,7 @@ def submit_response(
     assessment_id: UUID,
     payload: SubmitResponseRequest,
     service: ServiceDependency,
+    account_id: AccountDependency,
 ) -> SubmitResponseResponse:
     try:
         return service.submit(
@@ -138,8 +142,9 @@ def submit_response(
             payload.content,
             payload.submission_reason,
             payload.time_spent_seconds,
+            account_id=account_id,
         )
-    except AssessmentNotFoundError as exc:
+    except (AssessmentNotFoundError, AssessmentForbiddenError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except DuplicateResponseError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -167,10 +172,11 @@ def submit_response(
 def get_assessment(
     assessment_id: UUID,
     service: ServiceDependency,
+    account_id: AccountDependency,
 ) -> AssessmentStateResponse:
     try:
-        return service.get_state(assessment_id)
-    except AssessmentNotFoundError as exc:
+        return service.get_state(assessment_id, account_id=account_id)
+    except (AssessmentNotFoundError, AssessmentForbiddenError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
@@ -192,10 +198,11 @@ def get_assessment(
 def get_result(
     assessment_id: UUID,
     service: ServiceDependency,
+    account_id: AccountDependency,
 ) -> AssessmentResult:
     try:
-        return service.get_result(assessment_id)
-    except AssessmentNotFoundError as exc:
+        return service.get_result(assessment_id, account_id=account_id)
+    except (AssessmentNotFoundError, AssessmentForbiddenError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except AssessmentCompletedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

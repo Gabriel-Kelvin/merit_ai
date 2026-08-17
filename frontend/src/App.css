@@ -26,6 +26,8 @@ main { width: min(1120px, calc(100% - 48px)); margin: 0 auto; }
 .site-header nav button:hover, .site-header nav button.active, .public-login-button:hover { color: var(--black); }
 .site-header nav .logout-button { margin-left: 8px; padding-left: 18px; border-left: 1px solid var(--line); }
 .public-header { position: relative; }
+.public-auth-actions { display: flex; align-items: center; gap: 8px; }
+.public-signup-button { min-height: 38px; padding: 8px 15px; font-size: 12px; }
 
 .primary-button, .secondary-button {
   min-height: 46px; padding: 12px 19px; border-radius: 0; font-weight: 720;
@@ -65,6 +67,10 @@ main { width: min(1120px, calc(100% - 48px)); margin: 0 auto; }
 .login-panel { position: relative; display: grid; place-items: center; padding: 48px; background: white; }
 .login-back { position: absolute; top: 28px; left: 30px; border: 0; background: transparent; color: var(--muted); padding: 8px; }
 .login-card { width: min(420px, 100%); }
+.auth-tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--black); margin-bottom: 28px; }
+.auth-tabs button { min-height: 42px; border: 0; background: white; color: var(--muted); font-weight: 700; }
+.auth-tabs button + button { border-left: 1px solid var(--black); }
+.auth-tabs button.active { background: var(--black); color: white; }
 .login-lock { width: 44px; height: 44px; border: 1px solid var(--black); display: grid; place-items: center; margin-bottom: 28px; }
 .login-lock svg { width: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .login-card h2 { margin: 8px 0 10px; font-size: 43px; letter-spacing: -.04em; }

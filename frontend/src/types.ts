@@ -2,6 +2,8 @@ export type Dimension = string
 
 export interface AuthUser {
   username: string
+  email?: string | null
+  name?: string | null
 }
 
 export interface ProjectExperience {
